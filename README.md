@@ -2,6 +2,34 @@
 
 This script integrates price updaters for multiple stores (Al-Fatah, Jalal Sons, Metro, Rainbow, and Imtiaz) and provides a streamlined workflow for updating product prices through local CSV operations.
 
+## Project Structure
+
+```
+price_updaters/
+├── main.py                     # Main workflow orchestrator
+├── update_firebase.py          # Firebase integration script
+├── products.csv               # Input products file
+├── test_with_matched.csv      # Test input file
+├── consolidated.csv           # Generated consolidated output (root)
+├── requirements.txt           # Python dependencies
+├── serviceAccountKey.json     # Firebase service account key
+├── updaters/                  # Price updater modules
+│   ├── __init__.py
+│   ├── alfatah_price_updater.py
+│   ├── jalalsons_price_updater.py
+│   ├── metro_price_updater.py
+│   ├── rainbow_price_updater.py
+│   └── imtiaz_price_updater.py
+├── reports/                   # Generated reports and summaries
+│   ├── summary_report_YYYY-MM-DD.txt
+│   ├── *_price_comparison_YYYY-MM-DD.csv
+│   └── *_updated_YYYY-MM-DD.csv
+└── price_updates_YYYY-MM-DD/  # Temporary processing files
+    ├── *_products.csv         # Store-specific input splits
+    ├── *_price_comparison_YYYY-MM-DD.csv
+    └── *_updated_YYYY-MM-DD.csv
+```
+
 ## Features
 
 - Split input CSV by store (Al-Fatah, Jalal Sons, Metro, Rainbow, Imtiaz)
@@ -75,13 +103,20 @@ The input CSV must have the following columns:
 
 ## Output Files
 
-All output files are saved in a date-stamped directory (`price_updates_YYYY-MM-DD`):
+The application generates files in an organized structure:
 
-- `[store]_products.csv`: Products extracted from input CSV for each store
+### Root Directory
+- `consolidated.csv`: Final consolidated output with all updated products (only products with price changes)
+
+### Reports Directory (`reports/`)
+- `summary_report_YYYY-MM-DD.txt`: Comprehensive summary of the price update process
 - `[store]_price_comparison_YYYY-MM-DD.csv`: Price comparison CSVs for manual review
 - `[store]_updated_YYYY-MM-DD.csv`: Updated product files for each store
-- `consolidated_updated_YYYY-MM-DD.csv`: Consolidated output with all updated products
-- `summary_report_YYYY-MM-DD.txt`: Summary of the price update process
+
+### Processing Directory (`price_updates_YYYY-MM-DD/`)
+- `[store]_products.csv`: Products extracted from input CSV for each store
+- `[store]_price_comparison_YYYY-MM-DD.csv`: Temporary comparison files
+- `[store]_updated_YYYY-MM-DD.csv`: Temporary updated files
 
 Where `[store]` can be: alfatah, jalalsons, metro, rainbow, or imtiaz
 

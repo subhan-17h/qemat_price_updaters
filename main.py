@@ -7,11 +7,11 @@ from datetime import datetime
 from typing import Dict, List
 
 # Import the updater modules
-import alfatah_price_updater as alfatah
-import jalalsons_price_updater as jalalsons
-import rainbow_price_updater as rainbow
-import metro_price_updater as metro
-import imtiaz_price_updater as imtiaz
+from updaters import alfatah_price_updater as alfatah
+from updaters import jalalsons_price_updater as jalalsons
+from updaters import rainbow_price_updater as rainbow
+from updaters import metro_price_updater as metro
+from updaters import imtiaz_price_updater as imtiaz
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,8 +31,12 @@ class MultiStoreUpdater:
         self.timestamp = datetime.now().strftime('%Y-%m-%d')
         
         # Create output directory for this run
-        self.output_dir = f"price_updates_{self.timestamp}"
+        self.output_dir = f"price_updates"
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Create reports directory if it doesn't exist
+        self.reports_dir = "reports"
+        os.makedirs(self.reports_dir, exist_ok=True)
         
         # Store-specific paths
         self.alfatah_csv_path = os.path.join(self.output_dir, "alfatah_products.csv")
@@ -336,8 +340,8 @@ class MultiStoreUpdater:
     def merge_output_files(self) -> str:
         """Merge only products with price changes from all stores into a single consolidated file"""
         try:
-            # Create consolidated output path
-            consolidated_path = os.path.join(self.output_dir, f"consolidated.csv")
+            # Create consolidated output path in root directory
+            consolidated_path = "consolidated.csv"
             
             # Collect DataFrames to concatenate (only products with price changes)
             dfs_to_merge = []
@@ -438,10 +442,47 @@ class MultiStoreUpdater:
             logger.error(f"❌ Error merging output files: {e}")
             return None
     
+    def organize_reports(self) -> None:
+        """Copy important files to the reports directory for better organization"""
+        import shutil
+        try:
+            # Copy comparison files to reports directory
+            comparison_files = [
+                (self.alfatah_comparison_path, "Al-Fatah"),
+                (self.jalalsons_comparison_path, "Jalal Sons"),
+                (self.rainbow_comparison_path, "Rainbow"),
+                (self.metro_comparison_path, "Metro"),
+                (self.imtiaz_comparison_path, "Imtiaz")
+            ]
+            
+            for file_path, store_name in comparison_files:
+                if os.path.exists(file_path):
+                    dest_path = os.path.join(self.reports_dir, os.path.basename(file_path))
+                    shutil.copy2(file_path, dest_path)
+                    logger.info(f"📋 Copied {store_name} comparison to reports: {dest_path}")
+            
+            # Copy updated files to reports directory  
+            updated_files = [
+                (self.alfatah_output_path, "Al-Fatah"),
+                (self.jalalsons_output_path, "Jalal Sons"),
+                (self.rainbow_output_path, "Rainbow"),
+                (self.metro_output_path, "Metro"),
+                (self.imtiaz_output_path, "Imtiaz")
+            ]
+            
+            for file_path, store_name in updated_files:
+                if os.path.exists(file_path):
+                    dest_path = os.path.join(self.reports_dir, os.path.basename(file_path))
+                    shutil.copy2(file_path, dest_path)
+                    logger.info(f"📄 Copied {store_name} updated file to reports: {dest_path}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Error organizing reports: {e}")
+    
     def generate_summary_report(self) -> None:
         """Generate a summary report of the price update process"""
         try:
-            report_path = os.path.join(self.output_dir, f"summary_report_{self.timestamp}.txt")
+            report_path = os.path.join(self.reports_dir, f"summary_report_{self.timestamp}.txt")
             
             # Create the report content
             report = f"""
@@ -560,6 +601,7 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
                 logger.info("\n📋 NEXT STEPS:")
                 logger.info(f"1. Review the comparison CSVs")
                 logger.info(f"2. Run again with --step2-only flag to apply local CSV updates")
+                updater.organize_reports()
                 updater.generate_summary_report()
                 return comparison_results
         
@@ -579,7 +621,8 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
                 logger.info(f"📄 Consolidated output saved to: {consolidated_path}")
         
 
-        # Generate summary report
+        # Organize reports and generate summary
+        updater.organize_reports()
         updater.generate_summary_report()
         
         logger.info(f"✅ Multi-store price update workflow completed")
