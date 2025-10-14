@@ -1,7 +1,7 @@
 import csv
 import firebase_admin
 from firebase_admin import credentials, firestore
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 # Initialize Firebase Admin SDK
@@ -64,7 +64,7 @@ def update_products_from_csv(csv_file_path, collection_name='products'):
                         'categoryNameVariations': parse_json_field(row.get('categoryNameVariations', '')),
                         'created_at': row.get('created_at', '').strip(),
                         'image_url': row.get('image_url', '').strip(),
-                        'last_updated': datetime.utcnow().isoformat() + 'Z',
+                        'last_updated': datetime.now(timezone.utc).isoformat(),
                         'matched_products': parse_json_field(row.get('matched_products', '')),
                         'matched_products_count': parse_number(row.get('matched_products_count', '0')),
                         'name': row.get('name', '').strip(),

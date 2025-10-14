@@ -72,7 +72,7 @@ class AlFatahPriceUpdater:
         """Send a test request to the base URL to ensure the website is responsive"""
         try:
             logger.info(f"🔍 Testing website connection to {self.base_url}...")
-            self.driver.set_page_load_timeout(30)
+            self.driver.set_page_load_timeout(40)
             
             try:
                 self.driver.get(self.base_url)
@@ -101,13 +101,13 @@ class AlFatahPriceUpdater:
         try:
             logger.info(f"   🌐 Visiting: {url}")
 
-            # Set page load timeout to 30 seconds
-            self.driver.set_page_load_timeout(30)
+            # Set page load timeout to 40 seconds
+            self.driver.set_page_load_timeout(40)
             
             try:
                 self.driver.get(url)
             except Exception as timeout_error:
-                logger.error(f"   ⏱️ Page load timeout after 30 seconds: {url}")
+                logger.error(f"   ⏱️ Page load timeout after 40 seconds: {url}")
                 return None
             
             # Wait for page to load
@@ -536,12 +536,15 @@ class AlFatahPriceUpdater:
         
         logger.info('\n' + report)
         
-        # Save report to file
+        # Save report to file in reports folder
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        reports_dir = 'reports'
+        os.makedirs(reports_dir, exist_ok=True)  # Create reports directory if it doesn't exist
         report_filename = f'alfatah_update_report_{timestamp}.txt'
-        with open(report_filename, 'w', encoding='utf-8') as f:
+        report_path = os.path.join(reports_dir, report_filename)
+        with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report)
-        logger.info(f"📄 Report saved to: {report_filename}")
+        logger.info(f"📄 Report saved to: {report_path}")
 
 
 # MAIN EXECUTION FUNCTIONS

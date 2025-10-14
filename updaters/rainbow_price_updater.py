@@ -732,12 +732,15 @@ class RainbowPriceUpdater:
         
         logger.info('\n' + report)
         
-        # Save report to file
+        # Save report to file in reports folder
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        reports_dir = 'reports'
+        os.makedirs(reports_dir, exist_ok=True)  # Create reports directory if it doesn't exist
         report_filename = f'rainbow_update_report_{timestamp}.txt'
-        with open(report_filename, 'w', encoding='utf-8') as f:
+        report_path = os.path.join(reports_dir, report_filename)
+        with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report)
-        logger.info(f"📄 Report saved to: {report_filename}")
+        logger.info(f"📄 Report saved to: {report_path}")
     
 
 # MAIN EXECUTION FUNCTIONS
