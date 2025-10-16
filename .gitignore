@@ -1,4 +1,48 @@
+# Ignore service account key files
 serviceAccountKey.json
-/__pycache__
-/price_updates
-/reports
+
+# Ignore environment variables file
+.env
+.env.local
+.env.*.local
+price-updater-key.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output directories
+price_updates/
+reports/
+
+# Logs
+logs/
+*.log
+*.pid
+
+# Geckodriver
+geckodriver
+geckodriver.log
+
+# Optional: Uncomment if you don't want to track consolidated output
+# consolidated.csv

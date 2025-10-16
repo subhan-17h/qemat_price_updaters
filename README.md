@@ -239,10 +239,18 @@ Runs without browser UI (faster execution)
 To use Firebase integration:
 
 1. Obtain your Firebase service account key from Firebase Console
-2. Save it as `serviceAccountKey.json` in the project root
-3. Update the collection name in `update_firebase.py` if needed (default: `test_collection`)
+2. Convert it to `.env` format: `python3 convert_json_to_env.py`
+3. Update the collection name in `.env` if needed (default: `test_collection`)
 
 The orchestrator will automatically sync products with `price_change_needed = YES` to your Firebase Firestore database.
+
+## Cloud Deployment
+
+For running this application continuously on the cloud (e.g., 3-day operations):
+
+- **AWS Free Tier Deployment**: See `QUICKSTART.md` or `AWS_DEPLOYMENT.md`
+- **Features**: 12 months free, t2.micro instance, perfect for long-running tasks
+- **Cost**: $0 for first 12 months (within free tier limits)
 
 ## Scripts Overview
 
@@ -260,3 +268,20 @@ The orchestrator will automatically sync products with `price_change_needed = YE
 - **Purpose**: Syncs consolidated CSV to Firebase Firestore
 - **Features**: Batch updates, error handling, progress tracking
 - **Usage**: `python update_firebase.py` (uses consolidated.csv by default)
+
+### Utility Scripts
+
+#### convert_json_to_env.py
+- **Purpose**: Convert Firebase JSON key to `.env` format
+- **Usage**: `python3 convert_json_to_env.py`
+- **Note**: For secure cloud deployment
+
+#### setup_aws.sh
+- **Purpose**: Automated AWS EC2 setup script
+- **Usage**: Run on fresh AWS EC2 instance
+- **Note**: Installs all dependencies automatically
+
+#### run_in_background.sh
+- **Purpose**: Runs orchestrator in background (for multi-day operations)
+- **Usage**: `./run_in_background.sh`
+- **Note**: Process continues even if SSH disconnects

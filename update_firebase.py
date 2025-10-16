@@ -3,9 +3,30 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime, timezone
 import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Initialize Firebase Admin SDK
-cred = credentials.Certificate('./serviceAccountKey.json')
+# Try environment variables first, fall back to JSON file
+try:
+    # Import the config loader
+    from firebase_config import load_firebase_config_from_env, get_firebase_collection_name
+    
+    # Try to load from environment variables
+    if os.getenv('FIREBASE_PROJECT_ID'):
+        print("Loading Firebase config from environment variables...")
+        firebase_config = load_firebase_config_from_env()
+        cred = credentials.Certificate(firebase_config)
+    else:
+        print("Loading Firebase config from serviceAccountKey.json...")
+        cred = credentials.Certificate('./serviceAccountKey.json')
+except Exception as e:
+    print(f"Loading Firebase config from serviceAccountKey.json (env failed: {e})...")
+    cred = credentials.Certificate('./serviceAccountKey.json')
+
 firebase_admin.initialize_app(cred)
 
 # Get Firestore client
@@ -103,7 +124,13 @@ def update_products_from_csv(csv_file_path, collection_name='products'):
 if __name__ == "__main__":
     # Configuration
     CSV_FILE_PATH = 'consolidated.csv'  # Change this to your CSV file path
-    COLLECTION_NAME = 'test_collection'     # Change this to your collection name if different
+    
+    # Get collection name from environment or use default
+    try:
+        from firebase_config import get_firebase_collection_name
+        COLLECTION_NAME = get_firebase_collection_name()
+    except:
+        COLLECTION_NAME = os.getenv('FIREBASE_COLLECTION_NAME', 'test_collection')
     
     # Run the update
     update_products_from_csv(CSV_FILE_PATH, COLLECTION_NAME)
