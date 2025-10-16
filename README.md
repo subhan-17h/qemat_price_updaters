@@ -6,7 +6,8 @@ This script integrates price updaters for multiple stores (Al-Fatah, Jalal Sons,
 
 ```
 price_updaters/
-├── main.py                     # Main workflow orchestrator
+├── orchestrator.py            # Main orchestrator (runs main.py + Firebase sync)
+├── main.py                     # Price update workflow
 ├── update_firebase.py          # Firebase integration script
 ├── products.csv               # Input products file
 ├── test_with_matched.csv      # Test input file
@@ -32,12 +33,14 @@ price_updaters/
 
 ## Features
 
+- **Automated End-to-End Workflow**: Complete orchestration from price updates to Firebase sync
 - Split input CSV by store (Al-Fatah, Jalal Sons, Metro, Rainbow, Imtiaz)
 - Generate price comparison CSVs for all stores
 - Apply price updates from comparison CSVs to local files
 - Merge updated data into a consolidated file
+- **Automatic Firebase synchronization** of updated products
 - Generate comprehensive summary reports
-- Pure local CSV workflow (no external database dependencies)
+- Pure local CSV workflow with optional cloud sync
 
 ## Requirements
 
@@ -49,7 +52,44 @@ price_updaters/
 
 ## Usage
 
-### Complete Workflow
+### Quick Start - Complete Automated Workflow (Recommended)
+
+Run the complete price update and Firebase sync workflow:
+
+```bash
+python orchestrator.py
+```
+
+Or with a custom input file:
+
+```bash
+python orchestrator.py products.csv
+```
+
+This will:
+1. ✅ Update prices from all store websites
+2. ✅ Generate consolidated CSV with price changes
+3. ✅ Automatically sync updated products to Firebase
+
+### Advanced Options
+
+#### Run Only Price Updates (No Firebase Sync)
+
+```bash
+python orchestrator.py --step1-only
+```
+
+#### Run Only Firebase Sync (After Manual Review)
+
+```bash
+python orchestrator.py --step2-only
+```
+
+---
+
+### Manual Workflow - Using main.py Directly
+
+#### Complete Workflow
 
 Run the complete price update workflow:
 
@@ -65,7 +105,19 @@ Run in headless mode (no browser UI):
 python main.py products.csv --headless
 ```
 
-### Two-Step Process
+---
+
+### Firebase Integration
+
+After running the price update workflow, sync the consolidated results to Firebase:
+
+```bash
+python update_firebase.py
+```
+
+**Note**: The orchestrator (`orchestrator.py`) automatically handles this step for you!
+
+### Two-Step Process (Manual Review)
 
 #### Step 1 Only: Generate Comparison CSVs
 
@@ -122,7 +174,33 @@ Where `[store]` can be: alfatah, jalalsons, metro, rainbow, or imtiaz
 
 ## Workflow Process
 
-### Two-Step Workflow (Recommended)
+### Recommended: Orchestrator Workflow
+
+**Complete Automated Workflow**
+```bash
+python orchestrator.py test_with_matched.csv
+```
+This automatically:
+1. Generates price comparisons from store websites
+2. Applies updates to create consolidated CSV
+3. Syncs updated products to Firebase
+
+**Step-by-Step with Manual Review**
+```bash
+# Step 1: Price updates only
+python orchestrator.py test_with_matched.csv --step1-only
+
+# Review the consolidated.csv file
+
+# Step 2: Firebase sync only
+python orchestrator.py --step2-only
+```
+
+---
+
+### Manual Workflow (Using main.py)
+
+**Two-Step Workflow with Manual Review**
 
 **Step 1: Generate Price Comparisons**
 ```bash
@@ -136,13 +214,13 @@ python main.py test_with_matched.csv --step2-only
 ```
 This applies updates only for products marked with `price_change_needed = YES`
 
-### Complete Workflow
+**Complete Price Update Workflow**
 ```bash
 python main.py test_with_matched.csv
 ```
 Runs both steps automatically (generates comparisons and applies all changes)
 
-### Headless Mode
+**Headless Mode**
 ```bash
 python main.py test_with_matched.csv --headless
 ```
@@ -155,3 +233,30 @@ Runs without browser UI (faster execution)
 - **Metro** (metro-online.pk)  
 - **Rainbow** (rainbowcc.com.pk)
 - **Imtiaz** (shop.imtiaz.com.pk)
+
+## Firebase Configuration
+
+To use Firebase integration:
+
+1. Obtain your Firebase service account key from Firebase Console
+2. Save it as `serviceAccountKey.json` in the project root
+3. Update the collection name in `update_firebase.py` if needed (default: `test_collection`)
+
+The orchestrator will automatically sync products with `price_change_needed = YES` to your Firebase Firestore database.
+
+## Scripts Overview
+
+### orchestrator.py
+- **Purpose**: Main entry point for complete workflow automation
+- **Features**: Runs price updates + Firebase sync in one command
+- **Usage**: `python orchestrator.py [input_csv] [--step1-only|--step2-only]`
+
+### main.py
+- **Purpose**: Core price update logic for all stores
+- **Features**: Web scraping, price comparison, CSV generation
+- **Usage**: `python main.py input.csv [--headless] [--step1-only|--step2-only]`
+
+### update_firebase.py
+- **Purpose**: Syncs consolidated CSV to Firebase Firestore
+- **Features**: Batch updates, error handling, progress tracking
+- **Usage**: `python update_firebase.py` (uses consolidated.csv by default)
