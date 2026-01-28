@@ -109,8 +109,75 @@ class ImtiazPriceUpdater:
             logger.warning(f"⚠️  Error during website connection test: {e}")
             return False
     
+    def _select_dropdown_option(self, dropdown_input, option_text: str, dropdown_name: str) -> bool:
+        """Helper method to select an option from a MUI Autocomplete dropdown"""
+        try:
+            wait = WebDriverWait(self.driver, 10)
+            short_wait = WebDriverWait(self.driver, 3)
+            
+            # Click on the input to open dropdown
+            dropdown_input.click()
+            time.sleep(1)
+            
+            # Type the option text to filter
+            dropdown_input.clear()
+            dropdown_input.send_keys(option_text)
+            logger.info(f"   📝 Typed '{option_text}' in {dropdown_name}")
+            time.sleep(2)
+            
+            # Wait for dropdown options to appear (MUI uses a listbox with role="listbox")
+            option_selectors = [
+                f"//li[contains(@class, 'MuiAutocomplete-option') and contains(text(), '{option_text}')]",
+                f"//li[@role='option' and contains(text(), '{option_text}')]",
+                f"//*[@role='option' and contains(text(), '{option_text}')]",
+                "//li[contains(@class, 'MuiAutocomplete-option')]",
+                "//*[@role='option']"
+            ]
+            
+            for selector in option_selectors:
+                try:
+                    options = self.driver.find_elements(By.XPATH, selector)
+                    for option in options:
+                        if option.is_displayed():
+                            option_value = option.text.strip()
+                            if option_text.lower() in option_value.lower():
+                                logger.info(f"   🎯 Found matching option: '{option_value}'")
+                                self.driver.execute_script("arguments[0].scrollIntoView(true);", option)
+                                time.sleep(0.3)
+                                option.click()
+                                logger.info(f"   ✅ Selected '{option_value}' in {dropdown_name}")
+                                time.sleep(1)
+                                return True
+                except Exception as e:
+                    logger.debug(f"   ⚠️ Selector '{selector}' failed: {e}")
+                    continue
+            
+            # Fallback: just click the first visible option
+            try:
+                first_option = short_wait.until(EC.element_to_be_clickable((By.XPATH, "//li[contains(@class, 'MuiAutocomplete-option')]")))
+                option_value = first_option.text.strip()
+                first_option.click()
+                logger.info(f"   ✅ Selected first available option: '{option_value}' in {dropdown_name}")
+                time.sleep(1)
+                return True
+            except:
+                pass
+            
+            # Last fallback: press Enter to select
+            from selenium.webdriver.common.keys import Keys
+            dropdown_input.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.5)
+            dropdown_input.send_keys(Keys.ENTER)
+            logger.info(f"   ✅ Pressed Enter to select in {dropdown_name}")
+            time.sleep(1)
+            return True
+            
+        except Exception as e:
+            logger.warning(f"   ⚠️ Error selecting option in {dropdown_name}: {e}")
+            return False
+    
     def _handle_location_selection(self):
-        """Handle the Imtiaz location selection with Material UI dropdown"""
+        """Handle the Imtiaz location selection with Material UI dropdowns (City + Area)"""
         try:
             if self.location_selected:
                 return True
@@ -120,260 +187,94 @@ class ImtiazPriceUpdater:
             wait = WebDriverWait(self.driver, 15)
             
             try:
-                # Step 1: Check if area is already selected (like "Askari 1" in your HTML)
+                # Check if location is already selected by looking at cookie or page state
                 try:
-                    area_input_check = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder='Select Area / Sub Region']")
-                    current_value = area_input_check.get_attribute('value')
-                    if current_value and current_value.strip():
-                        logger.info(f"   ✅ Area already selected: {current_value}")
+                    # Check if we're already past the location selection
+                    city_input = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder='Select City / Region']")
+                    area_input = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder='Select Area / Sub Region']")
+                    
+                    city_value = city_input.get_attribute('value')
+                    area_value = area_input.get_attribute('value')
+                    
+                    if city_value and city_value.strip() and area_value and area_value.strip():
+                        logger.info(f"   ✅ Location already selected: {city_value} - {area_value}")
                         self.location_selected = True
                         return True
                 except:
-                    pass
+                    # Location selection dialog might not be present
+                    logger.info("   ℹ️ Location selection dialog not found, might already be set")
+                    self.location_selected = True
+                    return True
                 
-                # Step 2: Look for the area dropdown (Imtiaz seems to have area selection)
-                logger.info("   📍 Opening area dropdown...")
+                # Step 1: Select City first (e.g., "Karachi")
+                logger.info("   📍 Step 1: Selecting city...")
                 
-                # Try multiple selectors for the area dropdown
-                area_input_selectors = [
-                    "input[placeholder='Select Area / Sub Region']",
-                    ".MuiAutocomplete-input",
-                    ".MuiAutocomplete-inputRoot input",
-                    "input[role='combobox']",
-                    "#\\:r2\\:",
-                    ".MuiInputBase-input.MuiOutlinedInput-input"
+                try:
+                    city_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Select City / Region']")))
+                    logger.info("   ✅ Found city dropdown")
+                    
+                    if not self._select_dropdown_option(city_input, "Karachi", "City dropdown"):
+                        logger.warning("   ⚠️ Could not select city, trying to continue...")
+                except Exception as e:
+                    logger.warning(f"   ⚠️ City dropdown not found or error: {e}")
+                
+                time.sleep(2)
+                
+                # Step 2: Select Area (e.g., "Askari 1")
+                logger.info("   📍 Step 2: Selecting area...")
+                
+                try:
+                    area_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Select Area / Sub Region']")))
+                    logger.info("   ✅ Found area dropdown")
+                    
+                    if not self._select_dropdown_option(area_input, "Askari", "Area dropdown"):
+                        logger.warning("   ⚠️ Could not select area, trying to continue...")
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Area dropdown not found or error: {e}")
+                
+                time.sleep(2)
+                
+                # Step 3: Look for and click a "Continue", "Select", or submit button
+                logger.info("   📍 Step 3: Looking for submit/continue button...")
+                
+                submit_selectors = [
+                    "//button[contains(text(), 'Continue')]",
+                    "//button[contains(text(), 'Select')]",
+                    "//button[contains(text(), 'Confirm')]",
+                    "//button[contains(text(), 'EXPRESS')]",
+                    "//button[contains(text(), 'DELIVERY')]",
+                    "//button[contains(@class, 'MuiButton') and not(@disabled)]",
+                    ".MuiButton-root:not([disabled])",
+                    "button[type='submit']"
                 ]
                 
-                area_input = None
-                for selector in area_input_selectors:
+                for selector in submit_selectors:
                     try:
-                        area_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
-                        logger.info(f"   ✅ Found area input with selector: {selector}")
+                        if selector.startswith("//"):
+                            buttons = self.driver.find_elements(By.XPATH, selector)
+                        else:
+                            buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        
+                        for button in buttons:
+                            if button.is_displayed() and button.is_enabled():
+                                button_text = button.text.strip()
+                                # Skip cart or other unrelated buttons
+                                if button_text and not any(x in button_text.lower() for x in ['cart', 'login', 'sign']):
+                                    logger.info(f"   🎯 Found button: '{button_text}'")
+                                    button.click()
+                                    logger.info(f"   ✅ Clicked submit button: '{button_text}'")
+                                    time.sleep(3)
+                                    break
+                        else:
+                            continue
                         break
                     except Exception as e:
-                        logger.debug(f"   ⚠️ Area selector '{selector}' not found: {e}")
+                        logger.debug(f"   ⚠️ Button selector '{selector}' failed: {e}")
                         continue
                 
-                if area_input:
-                    # First, try to click on the dropdown arrow to open it
-                    try:
-                        dropdown_button = self.driver.find_element(By.CSS_SELECTOR, ".MuiAutocomplete-popupIndicator")
-                        dropdown_button.click()
-                        logger.info("   ✅ Clicked dropdown arrow to open options")
-                        time.sleep(1)
-                    except:
-                        # If dropdown button not found, click on the input field
-                        area_input.click()
-                        time.sleep(1)
-                    
-                    # Step 2: Look for Askari 1 option in the dropdown
-                    logger.info("   🔍 Looking for Askari 1 option...")
-                    
-                    # Wait for the dropdown options to appear
-                    time.sleep(3)
-                    
-                    # Debug: Let's see what options are available
-                    try:
-                        all_options = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Askari') or contains(text(), 'DOLMEN') or contains(text(), 'Hospital')]")
-                        if all_options:
-                            logger.info(f"   📋 Debug: Found {len(all_options)} potential options:")
-                            for i, option in enumerate(all_options[:10]):  # Show first 10
-                                try:
-                                    text = option.text.strip()
-                                    if text:
-                                        logger.info(f"      {i+1}. '{text}'")
-                                except:
-                                    pass
-                        else:
-                            logger.info("   📋 Debug: No options found with common text")
-                    except Exception as e:
-                        logger.debug(f"   ⚠️ Debug error: {e}")
-                    
-                    # Try multiple selectors for finding Askari 1 based on the dropdown structure
-                    askari_selectors = [
-                        "//div[text()='Askari 1']",
-                        "//li[text()='Askari 1']", 
-                        "//*[text()='Askari 1']",
-                        "//div[contains(text(), 'Askari 1')]",
-                        "//li[contains(text(), 'Askari 1')]",
-                        "//*[contains(text(), 'Askari 1')]",
-                        "//div[normalize-space(text())='Askari 1']",
-                        "//li[normalize-space(text())='Askari 1']",
-                        "//div[contains(@class, 'MuiAutocomplete-option') and contains(text(), 'Askari 1')]",
-                        "//li[contains(@class, 'MuiAutocomplete-option') and contains(text(), 'Askari 1')]",
-                        "//*[contains(@role, 'option') and contains(text(), 'Askari 1')]"
-                    ]
-                    
-                    askari_selected = False
-                    # Use shorter wait for each selector attempt
-                    short_wait = WebDriverWait(self.driver, 5)
-                    
-                    for selector in askari_selectors:
-                        try:
-                            askari_option = short_wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                            # Scroll into view if needed
-                            self.driver.execute_script("arguments[0].scrollIntoView(true);", askari_option)
-                            time.sleep(0.5)
-                            askari_option.click()
-                            logger.info(f"   ✅ Selected Askari 1 using selector: {selector}")
-                            askari_selected = True
-                            break
-                        except Exception as e:
-                            logger.debug(f"   ⚠️ Askari selector '{selector}' not found: {e}")
-                            continue
-                    
-                    if not askari_selected:
-                        logger.warning("   ⚠️ Could not find Askari 1 option in dropdown, trying to type it...")
-                        # Clear the input and type Askari 1
-                        area_input.clear()
-                        area_input.send_keys("Askari 1")
-                        time.sleep(2)
-                        
-                        # Try to find and click the option after typing
-                        typing_selectors = [
-                            "//li[contains(@class, 'MuiAutocomplete-option')]",
-                            "//*[contains(@role, 'option')]",
-                            ".MuiAutocomplete-option"
-                        ]
-                        
-                        for selector in typing_selectors:
-                            try:
-                                if selector.startswith("//"):
-                                    first_option = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                                else:
-                                    first_option = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
-                                
-                                option_text = first_option.text
-                                logger.info(f"   📋 Found option after typing: {option_text}")
-                                first_option.click()
-                                logger.info("   ✅ Selected first option after typing Askari 1")
-                                askari_selected = True
-                                break
-                            except Exception as e:
-                                logger.debug(f"   ⚠️ Option selector '{selector}' not found: {e}")
-                                continue
-                        
-                        if not askari_selected:
-                            logger.info("   ℹ️ Pressing Enter after typing Askari 1")
-                            area_input.send_keys("\n")
-                    
-                    # Enhanced fallback: look for any option containing "Askari" with multiple approaches
-                    if not askari_selected:
-                        logger.info("   🔍 Enhanced fallback: searching all visible elements for Askari...")
-                        
-                        # Try different approaches to find options
-                        option_searches = [
-                            # Search for any element containing "Askari 1"
-                            ("//*[contains(text(), 'Askari 1')]", "text contains 'Askari 1'"),
-                            ("//*[normalize-space(text())='Askari 1']", "exact text 'Askari 1'"),
-                            ("//*[contains(text(), 'Askari')]", "text contains 'Askari'"),
-                            # Search for common dropdown option patterns
-                            ("//div[contains(@style, 'cursor') and contains(text(), 'Askari')]", "clickable div with Askari"),
-                            ("//li[contains(text(), 'Askari')]", "li element with Askari"),
-                            ("//span[contains(text(), 'Askari')]", "span element with Askari")
-                        ]
-                        
-                        for search_xpath, description in option_searches:
-                            try:
-                                elements = self.driver.find_elements(By.XPATH, search_xpath)
-                                if elements:
-                                    logger.info(f"   📋 Found {len(elements)} elements using {description}")
-                                    for element in elements:
-                                        try:
-                                            element_text = element.text.strip()
-                                            if element_text and element.is_displayed():
-                                                logger.info(f"   🎯 Attempting to click: '{element_text}'")
-                                                # Scroll into view and click
-                                                self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
-                                                time.sleep(0.5)
-                                                element.click()
-                                                logger.info(f"   ✅ Successfully selected: {element_text}")
-                                                askari_selected = True
-                                                break
-                                        except Exception as click_error:
-                                            logger.debug(f"   ⚠️ Could not click element '{element_text}': {click_error}")
-                                            continue
-                                    if askari_selected:
-                                        break
-                            except Exception as search_error:
-                                logger.debug(f"   ⚠️ Search '{description}' failed: {search_error}")
-                                continue
-                        
-                        # Last resort: find any visible options and select first one
-                        if not askari_selected:
-                            logger.info("   🔍 Last resort: selecting any available option...")
-                            try:
-                                general_selectors = [
-                                    "//div[contains(@role, 'option')]",
-                                    "//li[contains(@class, 'option')]", 
-                                    "//*[contains(@class, 'MuiAutocomplete-option')]",
-                                    "//div[contains(@style, 'cursor: pointer')]"
-                                ]
-                                
-                                for selector in general_selectors:
-                                    try:
-                                        all_options = self.driver.find_elements(By.XPATH, selector)
-                                        if all_options:
-                                            for option in all_options:
-                                                if option.is_displayed():
-                                                    option_text = option.text.strip()
-                                                    if option_text:
-                                                        logger.info(f"   🎯 Last resort: clicking '{option_text}'")
-                                                        option.click()
-                                                        logger.info(f"   ✅ Selected as fallback: {option_text}")
-                                                        askari_selected = True
-                                                        break
-                                            if askari_selected:
-                                                break
-                                    except Exception as e:
-                                        logger.debug(f"   ⚠️ General selector '{selector}' failed: {e}")
-                                        continue
-                                
-                                    if askari_selected:
-                                        break
-                            except Exception as e:
-                                logger.debug(f"   ⚠️ Error in last resort search: {e}")
-                        
-                        if not askari_selected:
-                            logger.warning("   ⚠️ All fallback attempts failed - no options could be selected")
-                    
-                    time.sleep(2)
-                    
-                    # Step 3: Look for and click a "Select" or "Continue" button if it exists
-                    try:
-                        continue_selectors = [
-                            "//button[contains(text(), 'Select')]",
-                            "//button[contains(text(), 'Continue')]", 
-                            "//button[contains(text(), 'Confirm')]",
-                            "//button[contains(text(), 'EXPRESS')]",
-                            ".MuiButton-root[type='submit']"
-                        ]
-                        
-                        for selector in continue_selectors:
-                            try:
-                                if selector.startswith("//"):
-                                    continue_button = self.driver.find_element(By.XPATH, selector)
-                                else:
-                                    continue_button = self.driver.find_element(By.CSS_SELECTOR, selector)
-                                
-                                if continue_button.is_enabled():
-                                    continue_button.click()
-                                    logger.info("   🚀 Clicked continue/select button")
-                                    break
-                            except:
-                                continue
-                                
-                    except Exception as e:
-                        logger.info("   ℹ️ No continue button found, proceeding...")
-                    
-                    time.sleep(3)
-                    self.location_selected = True
-                    logger.info("   ✅ Location selection completed")
-                    return True
-                else:
-                    logger.warning("   ⚠️ Could not find area dropdown")
-                    self.location_selected = True
-                    return True
+                self.location_selected = True
+                logger.info("   ✅ Location selection completed")
+                return True
                 
             except Exception as e:
                 logger.warning(f"   ⚠️ Error during location selection: {e}")
