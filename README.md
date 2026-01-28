@@ -13,12 +13,16 @@ price_updaters/
 ├── requirements.txt           # Python dependencies
 ├── updaters/                  # Price updater modules
 │   ├── __init__.py
-│   ├── alfatah_price_updater.py
-│   ├── jalalsons_price_updater.py
-│   ├── metro_price_updater.py
-│   ├── rainbow_price_updater.py
-│   ├── imtiaz_price_updater.py
-│   └── carrefour_price_updater.py
+│   ├── alfatah_price_updater.py       # Selenium-based (legacy)
+│   ├── alfatah_price_updater_fast.py  # HTTP + JSON (fast) ⚡
+│   ├── jalalsons_price_updater.py     # Selenium-based (legacy)
+│   ├── jalalsons_price_updater_fast.py # HTTP + JSON (fast) ⚡
+│   ├── metro_price_updater.py         # Selenium-based (legacy)
+│   ├── metro_price_updater_fast.py    # HTTP + JSON (fast) ⚡
+│   ├── rainbow_price_updater.py       # Selenium-based (legacy)
+│   ├── rainbow_price_updater_fast.py  # HTTP + JSON (fast) ⚡
+│   ├── imtiaz_price_updater.py        # Selenium-based
+│   └── carrefour_price_updater.py     # Selenium-based
 ├── reports/                   # Generated reports and summaries
 │   ├── summary_report_YYYY-MM-DD.txt
 │   ├── *_price_comparison_YYYY-MM-DD.csv
@@ -44,6 +48,7 @@ price_updaters/
 - Merge updated data into a consolidated file
 - Generate comprehensive summary reports
 - **Progress tracking** for resumable operations (can resume after interruption)
+- **Fast updaters** using HTTP + JSON parsing for supported stores (no browser required)
 - Pure local CSV workflow
 
 ## Requirements
@@ -178,14 +183,14 @@ Runs without browser UI (faster execution)
 
 ## Supported Stores
 
-| Store | Website | Store ID |
-|-------|---------|----------|
-| Al-Fatah | alfatah.pk | `Al-Fatah` |
-| Jalal Sons | jalalsons.com.pk | `Jalal Sons` |
-| Metro | metro-online.pk | `Metro` |
-| Rainbow | rainbowcc.com.pk | `Rainbow` |
-| Imtiaz | shop.imtiaz.com.pk | `Imtiaz` |
-| Carrefour | carrefour.pk | `Carrefour` |
+| Store | Website | Store ID | Updater Type |
+|-------|---------|----------|-------------|
+| Al-Fatah | alfatah.pk | `Al-Fatah` | ⚡ Fast (HTTP) |
+| Jalal Sons | jalalsons.com.pk | `Jalal Sons` | ⚡ Fast (HTTP) |
+| Metro | metro-online.pk | `Metro` | ⚡ Fast (HTTP) |
+| Rainbow | rainbowcc.com.pk | `Rainbow` | ⚡ Fast (HTTP) |
+| Imtiaz | shop.imtiaz.com.pk | `Imtiaz` | 🌐 Selenium |
+| Carrefour | carrefour.pk | `Carrefour` | 🌐 Selenium |
 
 ## Scripts Overview
 
@@ -201,7 +206,12 @@ Runs without browser UI (faster execution)
 ### updaters/*.py
 - **Purpose**: Store-specific price extraction logic
 - **Stores**: alfatah, jalalsons, metro, rainbow, imtiaz, carrefour
-- **Features**: Selenium-based scraping, anti-bot detection, retry logic
+- **Two versions available**:
+  - **Standard (`*_price_updater.py`)**: Selenium-based scraping with browser automation
+  - **Fast (`*_price_updater_fast.py`)**: HTTP requests + JSON parsing (no browser required) ⚡
+- **Fast versions used by default** for: Al-Fatah, Jalal Sons, Metro, Rainbow
+- **Selenium-only** (no fast version yet): Imtiaz, Carrefour
+- **Features**: Anti-bot detection, retry logic, progress tracking
 
 ## Progress Tracking
 
