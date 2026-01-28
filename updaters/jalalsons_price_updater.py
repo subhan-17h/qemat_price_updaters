@@ -7,6 +7,11 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
 
+# Import progress tracker
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from progress_tracker import ProgressTracker
+
 # Selenium imports
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -342,7 +347,7 @@ class JalalSonsPriceUpdater:
         
         return updated_history
     
-    def generate_comparison_csv(self, input_csv_path: str, output_csv_path: str = None, delay_seconds: int = 3) -> Dict:
+    def generate_comparison_csv(self, input_csv_path: str, output_csv_path: str = None, delay_seconds: int = 3, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
         """Generate comparison CSV for manual review"""
         try:
             if not output_csv_path:
@@ -363,6 +368,18 @@ class JalalSonsPriceUpdater:
             self._test_website_connection()
             
             comparison_data = []
+            
+            # Filter out already processed products if using progress tracker
+            if progress_tracker:
+                processed_ids = progress_tracker.get_processed_ids()
+                if processed_ids:
+                    original_count = len(df)
+                    df = df[~df['product_id'].astype(str).isin(processed_ids)]
+                    skipped_count = original_count - len(df)
+                    if skipped_count > 0:
+                        logger.info(f"📂 Resuming: Skipping {skipped_count} already processed products")
+                        logger.info(f"📊 Remaining products to process: {len(df)}")
+                        self.stats['total'] = len(df)
             
             for index, product in df.iterrows():
                 progress = f"[{index + 1}/{self.stats['total']}]"
@@ -387,6 +404,8 @@ class JalalSonsPriceUpdater:
                     comparison_row['price_change_needed'] = 'ERROR - No URL'
                     comparison_data.append(comparison_row)
                     self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', error_message='No URL')
                     continue
                 
                 csv_price = product.get('price')
@@ -395,24 +414,48 @@ class JalalSonsPriceUpdater:
                     comparison_row['price_change_needed'] = 'ERROR - Invalid Price'
                     comparison_data.append(comparison_row)
                     self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', error_message='Invalid Price')
                     continue
                 
                 logger.info(f"   📋 CSV Price: Rs. {csv_price}")
                 logger.info(f"   📚 Price History: {len(current_price_history)} entries")
                 
-                # Get current price from website
-                website_data = self.extract_price_from_page(product['original_url'])
+                # Get current price from website with retry logic
+                website_data = None
+                max_retries = 3
+                for retry in range(max_retries):
+                    try:
+                        website_data = self.extract_price_from_page(product['original_url'])
+                        if website_data:
+                            break
+                        else:
+                            if retry < max_retries - 1:
+                                wait_time = (retry + 1) * 2
+                                logger.warning(f"{progress} ⚠️  Attempt {retry + 1}/{max_retries} failed. Retrying in {wait_time}s...")
+                                time.sleep(wait_time)
+                    except Exception as e:
+                        if retry < max_retries - 1:
+                            wait_time = (retry + 1) * 2
+                            logger.warning(f"{progress} ⚠️  Connection error (attempt {retry + 1}/{max_retries}): {e}. Retrying in {wait_time}s...")
+                            time.sleep(wait_time)
+                        else:
+                            logger.error(f"{progress} ❌ All retry attempts failed: {e}")
                 
                 if not website_data:
-                    logger.warning(f"{progress} ❌ Could not fetch website price (possible timeout)")
+                    logger.warning(f"{progress} ❌ Could not fetch website price after {max_retries} attempts")
                     comparison_row['price_change_needed'] = 'ERROR - Page timeout or failed to load'
                     comparison_data.append(comparison_row)
                     self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price, error_message='Page timeout after retries')
                 elif not website_data.get('current_price'):
                     logger.warning(f"{progress} ❌ Could not extract price from page")
                     comparison_row['price_change_needed'] = 'ERROR - Price not found on page'
                     comparison_data.append(comparison_row)
                     self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price, error_message='Price not found')
                 else:
                     website_price = website_data['current_price']
                     price_difference = website_price - csv_price
@@ -425,12 +468,16 @@ class JalalSonsPriceUpdater:
                         logger.info(f"{progress} ✅ Prices match - No update needed")
                         comparison_row['price_change_needed'] = 'NO'
                         self.stats['unchanged'] += 1
+                        if progress_tracker:
+                            progress_tracker.save_progress(product.get('product_id'), 'NO_CHANGE', old_price=csv_price, new_price=website_price)
                     else:
                         logger.info(f"{progress} 🔄 Price difference: Rs. {price_difference:.2f}")
                         logger.info(f"   📋 CSV: Rs. {csv_price}")
                         logger.info(f"   🌐 Website: Rs. {website_price}")
                         comparison_row['price_change_needed'] = 'YES'
                         self.stats['price_changes'] += 1
+                        if progress_tracker:
+                            progress_tracker.save_progress(product.get('product_id'), 'SUCCESS', old_price=csv_price, new_price=website_price)
                     
                     comparison_data.append(comparison_row)
                     self.stats['processed'] += 1
@@ -614,12 +661,12 @@ class JalalSonsPriceUpdater:
 
 # MAIN EXECUTION FUNCTIONS
 
-def generate_price_comparison(csv_file_path: str, output_path: str = None, delay_seconds: int = 3) -> Dict:
+def generate_price_comparison(csv_file_path: str, output_path: str = None, delay_seconds: int = 3, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
     """Generate comparison CSV for manual review"""
     updater = JalalSonsPriceUpdater(headless=False)
     
     try:
-        results = updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds)
+        results = updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds, progress_tracker)
         logger.info(f"\n🎉 Price comparison completed!")
         return results
     except Exception as e:

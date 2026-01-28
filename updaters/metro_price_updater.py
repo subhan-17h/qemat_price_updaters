@@ -7,6 +7,11 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
 
+# Import progress tracker
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from progress_tracker import ProgressTracker
+
 # Selenium imports
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -282,7 +287,7 @@ class MetroPriceUpdater:
         
         return updated_history
     
-    def generate_comparison_csv(self, input_csv_path: str, output_csv_path: str = None, delay_seconds: int = 3) -> Dict:
+    def generate_comparison_csv(self, input_csv_path: str, output_csv_path: str = None, delay_seconds: int = 3, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
         """Generate comparison CSV for manual review"""
         try:
             if not output_csv_path:
@@ -554,12 +559,12 @@ class MetroPriceUpdater:
 
 # MAIN EXECUTION FUNCTIONS
 
-def generate_price_comparison(csv_file_path: str, output_path: str = None, delay_seconds: int = 3) -> Dict:
+def generate_price_comparison(csv_file_path: str, output_path: str = None, delay_seconds: int = 3, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
     """Generate comparison CSV for manual review"""
     updater = MetroPriceUpdater(headless=False)
     
     try:
-        results = updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds)
+        results = updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds, progress_tracker)
         logger.info(f"\n🎉 Price comparison completed!")
         return results
     except Exception as e:

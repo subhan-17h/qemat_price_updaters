@@ -6,12 +6,16 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 
+# Import progress tracker
+from progress_tracker import ProgressTracker
+
 # Import the updater modules
 from updaters import alfatah_price_updater as alfatah
 from updaters import jalalsons_price_updater as jalalsons
 from updaters import rainbow_price_updater as rainbow
 from updaters import metro_price_updater as metro
 from updaters import imtiaz_price_updater as imtiaz
+from updaters import carrefour_price_updater as carrefour
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -44,6 +48,7 @@ class MultiStoreUpdater:
         self.rainbow_csv_path = os.path.join(self.output_dir, "rainbow_products.csv")
         self.metro_csv_path = os.path.join(self.output_dir, "metro_products.csv")
         self.imtiaz_csv_path = os.path.join(self.output_dir, "imtiaz_products.csv")
+        self.carrefour_csv_path = os.path.join(self.output_dir, "carrefour_products.csv")
         
         # Comparison CSVs
         self.alfatah_comparison_path = os.path.join(self.output_dir, f"alfatah_price_comparison_{self.timestamp}.csv")
@@ -51,6 +56,7 @@ class MultiStoreUpdater:
         self.rainbow_comparison_path = os.path.join(self.output_dir, f"rainbow_price_comparison_{self.timestamp}.csv")
         self.metro_comparison_path = os.path.join(self.output_dir, f"metro_price_comparison_{self.timestamp}.csv")
         self.imtiaz_comparison_path = os.path.join(self.output_dir, f"imtiaz_price_comparison_{self.timestamp}.csv")
+        self.carrefour_comparison_path = os.path.join(self.output_dir, f"carrefour_price_comparison_{self.timestamp}.csv")
         
         # Output CSVs
         self.alfatah_output_path = os.path.join(self.output_dir, f"alfatah_updated_{self.timestamp}.csv")
@@ -58,6 +64,7 @@ class MultiStoreUpdater:
         self.rainbow_output_path = os.path.join(self.output_dir, f"rainbow_updated_{self.timestamp}.csv")
         self.metro_output_path = os.path.join(self.output_dir, f"metro_updated_{self.timestamp}.csv")
         self.imtiaz_output_path = os.path.join(self.output_dir, f"imtiaz_updated_{self.timestamp}.csv")
+        self.carrefour_output_path = os.path.join(self.output_dir, f"carrefour_updated_{self.timestamp}.csv")
         
         # Results tracking
         self.results = {
@@ -65,7 +72,21 @@ class MultiStoreUpdater:
             "Jalal Sons": {"products": 0, "comparison_generated": False, "updates_applied": False},
             "Rainbow": {"products": 0, "comparison_generated": False, "updates_applied": False},
             "Metro": {"products": 0, "comparison_generated": False, "updates_applied": False},
-            "Imtiaz": {"products": 0, "comparison_generated": False, "updates_applied": False}
+            "Imtiaz": {"products": 0, "comparison_generated": False, "updates_applied": False},
+            "Carrefour": {"products": 0, "comparison_generated": False, "updates_applied": False}
+        }
+        
+        # Initialize progress trackers for each store
+        progress_dir = os.path.join(self.output_dir, "progress")
+        os.makedirs(progress_dir, exist_ok=True)
+        
+        self.progress_trackers = {
+            "Al-Fatah": ProgressTracker(os.path.join(progress_dir, "alfatah_progress.csv"), "Al-Fatah"),
+            "Jalal Sons": ProgressTracker(os.path.join(progress_dir, "jalalsons_progress.csv"), "Jalal Sons"),
+            "Rainbow": ProgressTracker(os.path.join(progress_dir, "rainbow_progress.csv"), "Rainbow"),
+            "Metro": ProgressTracker(os.path.join(progress_dir, "metro_progress.csv"), "Metro"),
+            "Imtiaz": ProgressTracker(os.path.join(progress_dir, "imtiaz_progress.csv"), "Imtiaz"),
+            "Carrefour": ProgressTracker(os.path.join(progress_dir, "carrefour_progress.csv"), "Carrefour")
         }
     
     def split_input_csv_by_store(self) -> Dict[str, int]:
@@ -86,6 +107,7 @@ class MultiStoreUpdater:
             rainbow_df = df[df['store_id'] == 'Rainbow']
             metro_df = df[df['store_id'] == 'Metro']
             imtiaz_df = df[df['store_id'] == 'Imtiaz']
+            carrefour_df = df[df['store_id'] == 'Carrefour']
             
             # Save store-specific CSVs
             if len(alfatah_df) > 0:
@@ -123,12 +145,20 @@ class MultiStoreUpdater:
             else:
                 logger.warning("⚠️  No Imtiaz products found in the input CSV")
             
+            if len(carrefour_df) > 0:
+                carrefour_df.to_csv(self.carrefour_csv_path, index=False)
+                self.results["Carrefour"]["products"] = len(carrefour_df)
+                logger.info(f"📊 Found {len(carrefour_df)} Carrefour products")
+            else:
+                logger.warning("⚠️  No Carrefour products found in the input CSV")
+            
             return {
                 "Al-Fatah": len(alfatah_df),
                 "Jalal Sons": len(jalalsons_df),
                 "Rainbow": len(rainbow_df),
                 "Metro": len(metro_df),
-                "Imtiaz": len(imtiaz_df)
+                "Imtiaz": len(imtiaz_df),
+                "Carrefour": len(carrefour_df)
             }
         
         except Exception as e:
@@ -146,7 +176,8 @@ class MultiStoreUpdater:
                 alfatah_results = alfatah.generate_price_comparison(
                     csv_file_path=self.alfatah_csv_path, 
                     output_path=self.alfatah_comparison_path,
-                    delay_seconds=2
+                    delay_seconds=2,
+                    progress_tracker=self.progress_trackers["Al-Fatah"]
                 )
                 self.results["Al-Fatah"]["comparison_generated"] = True
                 results["Al-Fatah"] = alfatah_results
@@ -162,7 +193,8 @@ class MultiStoreUpdater:
                 jalalsons_results = jalalsons.generate_price_comparison(
                     csv_file_path=self.jalalsons_csv_path, 
                     output_path=self.jalalsons_comparison_path,
-                    delay_seconds=3
+                    delay_seconds=3,
+                    progress_tracker=self.progress_trackers["Jalal Sons"]
                 )
                 self.results["Jalal Sons"]["comparison_generated"] = True
                 results["Jalal Sons"] = jalalsons_results
@@ -178,7 +210,8 @@ class MultiStoreUpdater:
                 rainbow_results = rainbow.generate_price_comparison(
                     csv_file_path=self.rainbow_csv_path, 
                     output_path=self.rainbow_comparison_path,
-                    delay_seconds=3
+                    delay_seconds=3,
+                    progress_tracker=self.progress_trackers["Rainbow"]
                 )
                 self.results["Rainbow"]["comparison_generated"] = True
                 results["Rainbow"] = rainbow_results
@@ -194,7 +227,8 @@ class MultiStoreUpdater:
                 metro_results = metro.generate_price_comparison(
                     csv_file_path=self.metro_csv_path, 
                     output_path=self.metro_comparison_path,
-                    delay_seconds=3
+                    delay_seconds=3,
+                    progress_tracker=self.progress_trackers["Metro"]
                 )
                 self.results["Metro"]["comparison_generated"] = True
                 results["Metro"] = metro_results
@@ -210,7 +244,8 @@ class MultiStoreUpdater:
                 imtiaz_results = imtiaz.generate_price_comparison(
                     csv_file_path=self.imtiaz_csv_path, 
                     output_path=self.imtiaz_comparison_path,
-                    delay_seconds=3
+                    delay_seconds=3,
+                    progress_tracker=self.progress_trackers["Imtiaz"]
                 )
                 self.results["Imtiaz"]["comparison_generated"] = True
                 results["Imtiaz"] = imtiaz_results
@@ -218,6 +253,23 @@ class MultiStoreUpdater:
             except Exception as e:
                 logger.error(f"❌ Error generating Imtiaz comparison: {e}")
                 self.results["Imtiaz"]["comparison_generated"] = False
+        
+        # Step 6: Generate Carrefour comparison
+        if self.results["Carrefour"]["products"] > 0:
+            try:
+                logger.info("\n🔄 Generating Carrefour price comparison...")
+                carrefour_results = carrefour.generate_price_comparison(
+                    csv_file_path=self.carrefour_csv_path, 
+                    output_path=self.carrefour_comparison_path,
+                    delay_seconds=3,
+                    progress_tracker=self.progress_trackers["Carrefour"]
+                )
+                self.results["Carrefour"]["comparison_generated"] = True
+                results["Carrefour"] = carrefour_results
+                logger.info("✅ Carrefour comparison CSV generated successfully")
+            except Exception as e:
+                logger.error(f"❌ Error generating Carrefour comparison: {e}")
+                self.results["Carrefour"]["comparison_generated"] = False
         
         return results
     
@@ -305,6 +357,22 @@ class MultiStoreUpdater:
                 logger.error(f"❌ Error applying Imtiaz updates: {e}")
                 self.results["Imtiaz"]["updates_applied"] = False
         
+        # Step 6: Update Carrefour products
+        if self.results["Carrefour"]["comparison_generated"]:
+            try:
+                logger.info("\n🔄 Applying Carrefour price updates...")
+                carrefour_results = carrefour.update_local_from_reviewed_csv(
+                    reviewed_csv_path=self.carrefour_comparison_path,
+                    original_csv_path=self.carrefour_csv_path,
+                    output_csv_path=self.carrefour_output_path
+                )
+                self.results["Carrefour"]["updates_applied"] = True
+                results["Carrefour"] = carrefour_results
+                logger.info("✅ Carrefour price updates applied successfully")
+            except Exception as e:
+                logger.error(f"❌ Error applying Carrefour updates: {e}")
+                self.results["Carrefour"]["updates_applied"] = False
+        
         return results
     
     def check_existing_comparison_files(self) -> None:
@@ -335,6 +403,11 @@ class MultiStoreUpdater:
         if os.path.exists(self.imtiaz_comparison_path):
             self.results["Imtiaz"]["comparison_generated"] = True
             logger.info(f"✅ Found Imtiaz comparison file: {self.imtiaz_comparison_path}")
+        
+        # Check Carrefour comparison file
+        if os.path.exists(self.carrefour_comparison_path):
+            self.results["Carrefour"]["comparison_generated"] = True
+            logger.info(f"✅ Found Carrefour comparison file: {self.carrefour_comparison_path}")
     
 
     def merge_output_files(self) -> str:
@@ -427,6 +500,22 @@ class MultiStoreUpdater:
                         total_products_with_changes += len(imtiaz_filtered)
                         logger.info(f"📊 Imtiaz: Added {len(imtiaz_filtered)} products with price changes to consolidated")
             
+            # Add Carrefour updates if available (only products with price changes)
+            if self.results["Carrefour"]["updates_applied"] and os.path.exists(self.carrefour_output_path) and os.path.exists(self.carrefour_comparison_path):
+                carrefour_df = pd.read_csv(self.carrefour_output_path)
+                carrefour_comparison_df = pd.read_csv(self.carrefour_comparison_path)
+                
+                # Get product IDs that need price changes
+                changed_product_ids = carrefour_comparison_df[carrefour_comparison_df['price_change_needed'] == 'YES']['product_id'].tolist()
+                
+                if changed_product_ids:
+                    # Filter output to only include products with price changes
+                    carrefour_filtered = carrefour_df[carrefour_df['product_id'].isin(changed_product_ids)]
+                    if len(carrefour_filtered) > 0:
+                        dfs_to_merge.append(carrefour_filtered)
+                        total_products_with_changes += len(carrefour_filtered)
+                        logger.info(f"📊 Carrefour: Added {len(carrefour_filtered)} products with price changes to consolidated")
+            
             # Merge if we have data from at least one store
             if dfs_to_merge:
                 consolidated_df = pd.concat(dfs_to_merge, ignore_index=True)
@@ -452,7 +541,8 @@ class MultiStoreUpdater:
                 (self.jalalsons_comparison_path, "Jalal Sons"),
                 (self.rainbow_comparison_path, "Rainbow"),
                 (self.metro_comparison_path, "Metro"),
-                (self.imtiaz_comparison_path, "Imtiaz")
+                (self.imtiaz_comparison_path, "Imtiaz"),
+                (self.carrefour_comparison_path, "Carrefour")
             ]
             
             for file_path, store_name in comparison_files:
@@ -467,7 +557,8 @@ class MultiStoreUpdater:
                 (self.jalalsons_output_path, "Jalal Sons"),
                 (self.rainbow_output_path, "Rainbow"),
                 (self.metro_output_path, "Metro"),
-                (self.imtiaz_output_path, "Imtiaz")
+                (self.imtiaz_output_path, "Imtiaz"),
+                (self.carrefour_output_path, "Carrefour")
             ]
             
             for file_path, store_name in updated_files:
@@ -499,6 +590,7 @@ Jalal Sons Products Processed: {self.results["Jalal Sons"]["products"]}
 Rainbow Products Processed: {self.results["Rainbow"]["products"]}
 Metro Products Processed: {self.results["Metro"]["products"]}
 Imtiaz Products Processed: {self.results["Imtiaz"]["products"]}
+Carrefour Products Processed: {self.results["Carrefour"]["products"]}
 
 🔍 COMPARISON GENERATION:
 ----------------------
@@ -507,6 +599,7 @@ Jalal Sons Comparison Generated: {"✅" if self.results["Jalal Sons"]["compariso
 Rainbow Comparison Generated: {"✅" if self.results["Rainbow"]["comparison_generated"] else "❌"}
 Metro Comparison Generated: {"✅" if self.results["Metro"]["comparison_generated"] else "❌"}
 Imtiaz Comparison Generated: {"✅" if self.results["Imtiaz"]["comparison_generated"] else "❌"}
+Carrefour Comparison Generated: {"✅" if self.results["Carrefour"]["comparison_generated"] else "❌"}
 
 🔄 CSV UPDATES APPLIED:
 ---------------------
@@ -515,6 +608,7 @@ Jalal Sons Updates Applied: {"✅" if self.results["Jalal Sons"]["updates_applie
 Rainbow Updates Applied: {"✅" if self.results["Rainbow"]["updates_applied"] else "❌"}
 Metro Updates Applied: {"✅" if self.results["Metro"]["updates_applied"] else "❌"}
 Imtiaz Updates Applied: {"✅" if self.results["Imtiaz"]["updates_applied"] else "❌"}
+Carrefour Updates Applied: {"✅" if self.results["Carrefour"]["updates_applied"] else "❌"}
 
 📝 FILES GENERATED:
 ----------------
@@ -538,12 +632,16 @@ Imtiaz Products: {os.path.basename(self.imtiaz_csv_path) if self.results["Imtiaz
 Imtiaz Comparison: {os.path.basename(self.imtiaz_comparison_path) if self.results["Imtiaz"]["comparison_generated"] else "N/A"}
 Imtiaz Updated: {os.path.basename(self.imtiaz_output_path) if self.results["Imtiaz"]["updates_applied"] else "N/A"}
 
-� CONSOLIDATED FILE NOTE:
+Carrefour Products: {os.path.basename(self.carrefour_csv_path) if self.results["Carrefour"]["products"] > 0 else "N/A"}
+Carrefour Comparison: {os.path.basename(self.carrefour_comparison_path) if self.results["Carrefour"]["comparison_generated"] else "N/A"}
+Carrefour Updated: {os.path.basename(self.carrefour_output_path) if self.results["Carrefour"]["updates_applied"] else "N/A"}
+
+📋 CONSOLIDATED FILE NOTE:
 -------------------------
 The consolidated.csv file contains ONLY products where price_change_needed = 'YES'
 Products with no price changes are excluded from the consolidated file.
 
-�🕒 Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+🕒 Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
             
             # Write to file
@@ -579,7 +677,7 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
         # Step 0: Split input CSV by store
         if not step2_only:
             store_counts = updater.split_input_csv_by_store()
-            logger.info(f"📊 Split input CSV by store: Al-Fatah ({store_counts['Al-Fatah']}), Jalal Sons ({store_counts['Jalal Sons']}), Rainbow ({store_counts['Rainbow']}), Metro ({store_counts['Metro']}), Imtiaz ({store_counts['Imtiaz']})")
+            logger.info(f"📊 Split input CSV by store: Al-Fatah ({store_counts['Al-Fatah']}), Jalal Sons ({store_counts['Jalal Sons']}), Rainbow ({store_counts['Rainbow']}), Metro ({store_counts['Metro']}), Imtiaz ({store_counts['Imtiaz']}), Carrefour ({store_counts['Carrefour']})")
         
         # Step 1: Generate price comparison CSVs
         if not step2_only:
@@ -598,6 +696,8 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
                     logger.info(f"📁 Metro comparison CSV: {updater.metro_comparison_path}")
                 if updater.results["Imtiaz"]["comparison_generated"]:
                     logger.info(f"📁 Imtiaz comparison CSV: {updater.imtiaz_comparison_path}")
+                if updater.results["Carrefour"]["comparison_generated"]:
+                    logger.info(f"📁 Carrefour comparison CSV: {updater.carrefour_comparison_path}")
                 logger.info("\n📋 NEXT STEPS:")
                 logger.info(f"1. Review the comparison CSVs")
                 logger.info(f"2. Run again with --step2-only flag to apply local CSV updates")
@@ -637,7 +737,7 @@ if __name__ == "__main__":
     import argparse
     
     # Set up command-line arguments
-    parser = argparse.ArgumentParser(description="Multi-store price updater for Al-Fatah, Jalal Sons, Rainbow, Metro, and Imtiaz")
+    parser = argparse.ArgumentParser(description="Multi-store price updater for Al-Fatah, Jalal Sons, Rainbow, Metro, Imtiaz, and Carrefour")
     parser.add_argument("input_csv", help="Path to the input CSV with products from multiple stores")
     parser.add_argument("--headless", action="store_true", help="Run browsers in headless mode")
     parser.add_argument("--step1-only", action="store_true", help="Only run Step 1 (comparison generation)")
