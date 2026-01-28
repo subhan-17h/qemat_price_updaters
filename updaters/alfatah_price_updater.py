@@ -175,19 +175,53 @@ class AlFatahPriceUpdater:
                 except Exception as e:
                     logger.debug(f"Error with priority selector '{selector}': {e}")
             
-            # If priority selectors didn't work, try a broader approach
+            # If priority selectors didn't work, try #variant-price first (main product price)
+            # This is the most reliable selector for the main product on Al-Fatah
+            variant_price_selectors = [
+                "#variant-price",
+                "span#variant-price",
+                ".product-main-wrapper #variant-price",
+                ".product-price #variant-price"
+            ]
+            
+            for selector in variant_price_selectors:
+                try:
+                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if element:
+                        price_text = element.text.strip()
+                        if price_text:
+                            logger.info(f"Found price with variant selector '{selector}': {price_text}")
+                            # Clean price text - handle Rs, Rs., PKR, non-breaking space (\xa0), and commas
+                            cleaned_price = price_text.replace('Rs.', '').replace('Rs', '').replace('PKR', '').replace(',', '').replace('\xa0', '').replace(' ', '').strip()
+                            
+                            if cleaned_price:
+                                try:
+                                    price_value = float(cleaned_price)
+                                    if price_value > 0:
+                                        logger.info(f"   💰 Found price: Rs. {price_value} (using selector: {selector})")
+                                        return {
+                                            'current_price': price_value,
+                                            'original_price': None,
+                                            'source_info': {
+                                                'selector': selector,
+                                                'original_text': price_text,
+                                                'cleaned_text': cleaned_price
+                                            },
+                                            'is_sale': False
+                                        }
+                                except ValueError:
+                                    logger.debug(f"Could not convert price to float: {cleaned_price}")
+                except Exception as e:
+                    logger.debug(f"Error with variant selector '{selector}': {e}")
+            
+            # Last resort: try broader selectors but be very specific to avoid related products
             fallback_selectors = [
-                ".product-price",
-                ".price",
-                "[data-regular-price]",
-                ".price-current", 
-                ".current-price",
-                ".sale-price",
-                ".price-box .price",
+                # Al-Fatah specific - ONLY within main product wrapper
+                ".product-main-wrapper > .row > .col-lg-6 .product-price .price",
+                ".product-main-wrapper .product-price span.price:not(.price-now)",
+                # Generic selectors - avoid .price-now which is used in related products
                 ".product-detail-price",
-                ".price-container .price",
-                ".price-amount",
-                ".selling-price"
+                "[data-regular-price]"
             ]
             
             found_prices = []
@@ -201,7 +235,8 @@ class AlFatahPriceUpdater:
                         price_text = element.text.strip()
                         if price_text:
                             logger.debug(f"Found price text with fallback selector '{selector}': {price_text}")
-                            cleaned_price = price_text.replace('Rs.', '').replace('PKR', '').replace(',', '').strip()
+                            # Clean price text - handle Rs, Rs., PKR, non-breaking space (\xa0), and commas
+                            cleaned_price = price_text.replace('Rs.', '').replace('Rs', '').replace('PKR', '').replace(',', '').replace('\xa0', '').replace(' ', '').strip()
                             
                             if cleaned_price:
                                 try:
@@ -220,9 +255,9 @@ class AlFatahPriceUpdater:
                     continue
             
             if found_prices:
-                # Return the lowest price (current/sale price) and highest (original)
-                current_price = min(found_prices)
-                original_price = max(found_prices) if len(found_prices) > 1 else None
+                # Return the first found price (most specific selector match)
+                current_price = found_prices[0]
+                original_price = max(found_prices) if len(found_prices) > 1 and max(found_prices) != current_price else None
                 
                 logger.info(f"   💰 Found price: Rs. {current_price} (using fallback selector: {source_info[current_price]['selector']})")
                 

@@ -125,12 +125,20 @@ class CarrefourPriceUpdater:
             
             try:
                 # Try multiple selectors for price (main part)
-                # div with text-lg leading-5 font-bold classes
+                # Product detail pages use text-xl/text-2xl classes
                 price_selectors = [
+                    # Primary selectors for product detail page (text-xl/text-2xl)
+                    "div.text-xl.leading-7.font-bold",
+                    "div.text-2xl.leading-7.font-bold",
+                    "div.text-xl.font-bold",
+                    "div.text-2xl.font-bold",
+                    # Secondary selectors for listing pages (text-lg)
                     "div.text-lg.leading-5.font-bold",
                     "div.text-lg.font-bold",
                     "div.font-bold.text-lg",
-                    # Additional selectors for product detail pages
+                    # Additional selectors
+                    "span.text-xl.leading-7.font-bold",
+                    "span.text-2xl.font-bold",
                     "span.text-lg.leading-5.font-bold",
                     "span.text-lg.font-bold",
                     "[data-testid='product-price']",
@@ -150,12 +158,17 @@ class CarrefourPriceUpdater:
                     except:
                         continue
                 
-                # Get decimal part - div with text-2xs font-bold
+                # Get decimal part - various selectors for different page types
                 try:
                     decimal_selectors = [
+                        # Product detail page decimal (text-sm with ml-2xs)
+                        "div.text-sm.leading-4.font-bold.ml-2xs",
+                        "div.text-sm.font-bold.ml-2xs",
+                        # Listing page decimal (text-2xs)
                         "div.text-2xs.font-bold.leading-\\[10px\\]",
                         "div.text-2xs.font-bold",
-                        "span.text-2xs.font-bold"
+                        "span.text-2xs.font-bold",
+                        "span.text-sm.font-bold.ml-2xs"
                     ]
                     for selector in decimal_selectors:
                         try:
