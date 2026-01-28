@@ -10,10 +10,12 @@ from typing import Dict, List
 from progress_tracker import ProgressTracker
 
 # Import the updater modules
-from updaters import alfatah_price_updater as alfatah
-from updaters import jalalsons_price_updater as jalalsons
-from updaters import rainbow_price_updater as rainbow
-from updaters import metro_price_updater as metro
+# Using fast versions (HTTP + JSON parsing) for stores that support it
+from updaters import alfatah_price_updater_fast as alfatah
+from updaters import jalalsons_price_updater_fast as jalalsons
+from updaters import rainbow_price_updater_fast as rainbow
+from updaters import metro_price_updater_fast as metro
+# Imtiaz and Carrefour still use Selenium (no fast version available yet)
 from updaters import imtiaz_price_updater as imtiaz
 from updaters import carrefour_price_updater as carrefour
 
@@ -169,14 +171,14 @@ class MultiStoreUpdater:
         """Generate price comparison CSVs for all supported stores"""
         results = {}
         
-        # Step 1: Generate Al-Fatah comparison
+        # Step 1: Generate Al-Fatah comparison (fast version)
         if self.results["Al-Fatah"]["products"] > 0:
             try:
-                logger.info("\n🔄 Generating Al-Fatah price comparison...")
+                logger.info("\n🔄 Generating Al-Fatah price comparison (FAST)...")
                 alfatah_results = alfatah.generate_price_comparison(
-                    csv_file_path=self.alfatah_csv_path, 
+                    csv_file_path=self.alfatah_csv_path,
                     output_path=self.alfatah_comparison_path,
-                    delay_seconds=2,
+                    delay_seconds=0.5,  # Fast: 0.5s instead of 2s
                     progress_tracker=self.progress_trackers["Al-Fatah"]
                 )
                 self.results["Al-Fatah"]["comparison_generated"] = True
@@ -186,14 +188,14 @@ class MultiStoreUpdater:
                 logger.error(f"❌ Error generating Al-Fatah comparison: {e}")
                 self.results["Al-Fatah"]["comparison_generated"] = False
         
-        # Step 2: Generate Jalal Sons comparison
+        # Step 2: Generate Jalal Sons comparison (fast version)
         if self.results["Jalal Sons"]["products"] > 0:
             try:
-                logger.info("\n🔄 Generating Jalal Sons price comparison...")
+                logger.info("\n🔄 Generating Jalal Sons price comparison (FAST)...")
                 jalalsons_results = jalalsons.generate_price_comparison(
-                    csv_file_path=self.jalalsons_csv_path, 
+                    csv_file_path=self.jalalsons_csv_path,
                     output_path=self.jalalsons_comparison_path,
-                    delay_seconds=3,
+                    delay_seconds=0.5,  # Fast: 0.5s instead of 3s
                     progress_tracker=self.progress_trackers["Jalal Sons"]
                 )
                 self.results["Jalal Sons"]["comparison_generated"] = True
@@ -203,14 +205,14 @@ class MultiStoreUpdater:
                 logger.error(f"❌ Error generating Jalal Sons comparison: {e}")
                 self.results["Jalal Sons"]["comparison_generated"] = False
         
-        # Step 3: Generate Rainbow comparison
+        # Step 3: Generate Rainbow comparison (fast version)
         if self.results["Rainbow"]["products"] > 0:
             try:
-                logger.info("\n🔄 Generating Rainbow price comparison...")
+                logger.info("\n🔄 Generating Rainbow price comparison (FAST)...")
                 rainbow_results = rainbow.generate_price_comparison(
-                    csv_file_path=self.rainbow_csv_path, 
+                    csv_file_path=self.rainbow_csv_path,
                     output_path=self.rainbow_comparison_path,
-                    delay_seconds=3,
+                    delay_seconds=0.5,  # Fast: 0.5s instead of 3s
                     progress_tracker=self.progress_trackers["Rainbow"]
                 )
                 self.results["Rainbow"]["comparison_generated"] = True
@@ -220,14 +222,14 @@ class MultiStoreUpdater:
                 logger.error(f"❌ Error generating Rainbow comparison: {e}")
                 self.results["Rainbow"]["comparison_generated"] = False
         
-        # Step 4: Generate Metro comparison
+        # Step 4: Generate Metro comparison (fast version)
         if self.results["Metro"]["products"] > 0:
             try:
-                logger.info("\n🔄 Generating Metro price comparison...")
+                logger.info("\n🔄 Generating Metro price comparison (FAST)...")
                 metro_results = metro.generate_price_comparison(
-                    csv_file_path=self.metro_csv_path, 
+                    csv_file_path=self.metro_csv_path,
                     output_path=self.metro_comparison_path,
-                    delay_seconds=3,
+                    delay_seconds=0.5,  # Fast: 0.5s instead of 3s
                     progress_tracker=self.progress_trackers["Metro"]
                 )
                 self.results["Metro"]["comparison_generated"] = True

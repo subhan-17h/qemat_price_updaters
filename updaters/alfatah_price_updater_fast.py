@@ -1,0 +1,433 @@
+"""
+OPTIMIZED Al-Fatah Price Updater - Using HTTP Requests instead of Selenium
+
+Speed improvement: ~10-20x faster than Selenium version
+Al-Fatah uses Shopify with price in JSON: {"id":45745695359264,"price":74500,...}
+Note: Shopify stores prices in cents (multiply by 0.01)
+"""
+import sys
+import pandas as pd
+import time
+import json
+import os
+import re
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+import logging
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from progress_tracker import ProgressTracker
+
+import requests
+from bs4 import BeautifulSoup
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class AlFatahPriceUpdaterFast:
+    """Optimized Al-Fatah price updater using HTTP requests."""
+
+    def __init__(self):
+        self.base_url = "https://alfatah.pk"
+        self.store_id = "Al-Fatah"
+        self.stats = {'total': 0, 'processed': 0, 'price_changes': 0, 'errors': 0, 'unchanged': 0}
+
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        })
+
+    def _fetch_page(self, url: str, timeout: int = 10) -> Optional[str]:
+        try:
+            response = self.session.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            logger.debug(f"   Request failed: {e}")
+            return None
+
+    def extract_price_from_shopify_json(self, html: str) -> Optional[float]:
+        """
+        Al-Fatah uses Shopify with format:
+        {"id":45745695359264,"price":74500,"name":"PRODUCT",...}
+        Note: Shopify stores price in cents (74500 = 745.00)
+        """
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            scripts = soup.find_all('script')
+
+            for script in scripts:
+                if not script.string:
+                    continue
+
+                # Find Shopify product JSON patterns
+                # Pattern: {"id":...,"price":74500,...}
+                matches = re.findall(
+                    r'\{[^{}]*"id"\s*:\s*\d+[^{}]*"price"\s*:\s*(\d+)[^{}]*\}',
+                    script.string
+                )
+
+                for match in matches:
+                    try:
+                        # Shopify price is in cents
+                        price_cents = int(match)
+                        price = price_cents / 100.0  # Convert to rupees
+                        if 0 < price < 1000000:
+                            return price
+                    except (ValueError, TypeError):
+                        continue
+
+                # Also try to parse full JSON objects
+                json_patterns = re.findall(
+                    r'\{(?:[^{}]|"(?:[^"\\]|\\.)*")*\}',
+                    script.string
+                )
+
+                for pattern in json_patterns:
+                    try:
+                        # Limit size to avoid huge JSON parsing
+                        if len(pattern) > 50000:
+                            continue
+                        data = json.loads(pattern)
+
+                        # Check for Shopify product structure
+                        if isinstance(data, dict):
+                            # Direct price field (Shopify format)
+                            if 'price' in data:
+                                price_val = data['price']
+                                if isinstance(price_val, (int, float)):
+                                    # Check if it's in cents (Shopify) or regular
+                                    if price_val > 1000:  # Likely in cents
+                                        price = price_val / 100.0
+                                    else:
+                                        price = float(price_val)
+                                    if 0 < price < 1000000:
+                                        return price
+
+                            # Check nested product/variant structures
+                            for key in ['product', 'variant', 'selectedVariant']:
+                                if key in data and isinstance(data[key], dict):
+                                    item = data[key]
+                                    if 'price' in item:
+                                        price_val = item['price']
+                                        if isinstance(price_val, (int, float)):
+                                            if price_val > 1000:
+                                                price = price_val / 100.0
+                                            else:
+                                                price = float(price_val)
+                                            if 0 < price < 1000000:
+                                                return price
+
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        continue
+
+        except Exception as e:
+            logger.debug(f"   Shopify JSON error: {e}")
+
+        return None
+
+    def extract_price_from_html_elements(self, html: str) -> Optional[float]:
+        """Fallback: extract from HTML elements."""
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+
+            # Look for price elements
+            selectors = [
+                '[class*="price"]',
+                '.product-price',
+                '.price-item',
+                '[data-product-price]'
+            ]
+
+            for selector in selectors:
+                for elem in soup.select(selector):
+                    text = elem.get_text(strip=True)
+                    # Pattern: Rs. 745, PKR 745, 745
+                    match = re.search(r'(?:Rs\.?|PKR)?\s*(\d{1,5}[,\d]*\.?\d*)', text)
+                    if match:
+                        price_str = match.group(1).replace(',', '')
+                        try:
+                            price = float(price_str)
+                            if 0 < price < 100000:
+                                return price
+                        except ValueError:
+                            continue
+
+        except Exception as e:
+            logger.debug(f"   HTML element error: {e}")
+
+        return None
+
+    def extract_price_from_page(self, url: str) -> Optional[Dict[str, Any]]:
+        """Extract price from Al-Fatah product page."""
+        try:
+            logger.info(f"   🌐 Fetching: {url}")
+            html = self._fetch_page(url)
+
+            if not html:
+                logger.warning(f"   ❌ Failed to fetch")
+                return None
+
+            # Try Shopify JSON first
+            price = self.extract_price_from_shopify_json(html)
+            source = "Shopify JSON"
+
+            if price is None:
+                price = self.extract_price_from_html_elements(html)
+                source = "HTML elements"
+
+            if price:
+                logger.info(f"   💰 Found price: Rs. {price} (via {source})")
+                return {
+                    'current_price': price,
+                    'original_price': None,
+                    'source_info': {'method': 'HTTP + ' + source}
+                }
+            else:
+                logger.warning(f"   ❌ Could not extract price")
+                return None
+
+        except Exception as e:
+            logger.error(f"   ❌ Error: {e}")
+            return None
+
+    def parse_price_history(self, data) -> List[Dict]:
+        try:
+            if pd.isna(data) or data == '':
+                return []
+            if isinstance(data, str) and (data.startswith('[') or data.startswith('{')):
+                return json.loads(data)
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception:
+            return []
+
+    def create_price_history_entry(self, price: float, is_current: bool = False) -> Dict:
+        return {'price': price, 'is_current': is_current, 'timestamp': datetime.now().isoformat()}
+
+    def update_price_history(self, history: List[Dict], new_price: float) -> List[Dict]:
+        updated = []
+        for entry in history:
+            e = entry.copy()
+            e['is_current'] = False
+            updated.append(e)
+        updated.append(self.create_price_history_entry(new_price, True))
+        return updated
+
+    def generate_comparison_csv(self, input_csv_path: str, output_csv_path: str = None,
+                                delay_seconds: float = 0.5, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
+        try:
+            if not output_csv_path:
+                timestamp = datetime.now().strftime('%Y-%m-%d')
+                output_csv_path = f'alfatah_price_comparison_{timestamp}.csv'
+
+            logger.info(f"📄 Reading CSV: {input_csv_path}")
+            df = pd.read_csv(input_csv_path)
+            self.stats['total'] = len(df)
+            logger.info(f"📊 Found {self.stats['total']} products\n")
+
+            comparison_data = []
+
+            if progress_tracker:
+                processed_ids = progress_tracker.get_processed_ids()
+                if processed_ids:
+                    df = df[~df['product_id'].astype(str).isin(processed_ids)]
+                    logger.info(f"📂 Skipping {len(processed_ids)} processed products")
+
+            for index, product in df.iterrows():
+                progress = f"[{index + 1}/{self.stats['total']}]"
+                product_name = product.get('name', 'Unknown')
+
+                logger.info(f"{progress} 🔍 Checking: {product_name}")
+
+                comparison_row = {
+                    'product_id': product.get('product_id'),
+                    'old_price': product.get('price'),
+                    'new_price': None,
+                    'price_change_needed': 'NO'
+                }
+
+                if pd.isna(product.get('original_url')) or not product.get('original_url'):
+                    logger.warning(f"{progress} ⏭️  No URL")
+                    comparison_row['price_change_needed'] = 'ERROR - No URL'
+                    comparison_data.append(comparison_row)
+                    self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', error_message='No URL')
+                    continue
+
+                csv_price = product.get('price')
+                if pd.isna(csv_price) or csv_price <= 0:
+                    logger.warning(f"{progress} ⏭️  Invalid price")
+                    comparison_row['price_change_needed'] = 'ERROR - Invalid Price'
+                    comparison_data.append(comparison_row)
+                    self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', error_message='Invalid Price')
+                    continue
+
+                logger.info(f"   📋 CSV Price: Rs. {csv_price}")
+
+                website_data = self.extract_price_from_page(product['original_url'])
+
+                if not website_data:
+                    logger.warning(f"{progress} ❌ Fetch failed")
+                    comparison_row['price_change_needed'] = 'ERROR - Failed'
+                    comparison_data.append(comparison_row)
+                    self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price)
+                elif not website_data.get('current_price'):
+                    logger.warning(f"{progress} ❌ No price found")
+                    comparison_row['price_change_needed'] = 'ERROR - Not found'
+                    comparison_data.append(comparison_row)
+                    self.stats['errors'] += 1
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price)
+                else:
+                    website_price = website_data['current_price']
+                    diff = website_price - csv_price
+                    comparison_row['new_price'] = website_price
+
+                    if abs(diff) < 0.01:
+                        logger.info(f"{progress} ✅ Match")
+                        comparison_row['price_change_needed'] = 'NO'
+                        self.stats['unchanged'] += 1
+                        if progress_tracker:
+                            progress_tracker.save_progress(product.get('product_id'), 'NO_CHANGE', old_price=csv_price, new_price=website_price)
+                    else:
+                        logger.info(f"{progress} 🔄 Diff: Rs. {diff:.2f}")
+                        comparison_row['price_change_needed'] = 'YES'
+                        self.stats['price_changes'] += 1
+                        if progress_tracker:
+                            progress_tracker.save_progress(product.get('product_id'), 'SUCCESS', old_price=csv_price, new_price=website_price)
+
+                    comparison_data.append(comparison_row)
+                    self.stats['processed'] += 1
+
+                logger.info('')
+                if index < len(df) - 1:
+                    time.sleep(delay_seconds)
+
+            comparison_df = pd.DataFrame(comparison_data)
+            comparison_df.to_csv(output_csv_path, index=False)
+
+            logger.info(f"\n✅ Saved: {output_csv_path}")
+            logger.info(f"📊 {self.stats['processed']} checked, {self.stats['price_changes']} changes, {self.stats['unchanged']} unchanged, {self.stats['errors']} errors")
+
+            return {'output_file': output_csv_path, 'stats': self.stats, 'comparison_data': comparison_data}
+
+        except Exception as e:
+            logger.error(f"❌ Error: {e}")
+            raise
+
+    def update_local_from_reviewed_csv(self, reviewed_csv_path: str, original_csv_path: str, output_csv_path: str = None) -> Dict:
+        try:
+            logger.info(f"📄 Reading comparison CSV")
+            comparison_df = pd.read_csv(reviewed_csv_path)
+
+            required = ['product_id', 'old_price', 'new_price', 'price_change_needed']
+            if not all(col in comparison_df.columns for col in required):
+                raise ValueError(f"Missing columns: {required}")
+
+            logger.info(f"📄 Reading original CSV")
+            original_df = pd.read_csv(original_csv_path)
+
+            if not output_csv_path:
+                output_csv_path = original_csv_path
+                backup = f"{original_csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                logger.info(f"📑 Backup: {backup}")
+                original_df.to_csv(backup, index=False)
+
+            changes_df = comparison_df[comparison_df['price_change_needed'] == 'YES']
+            logger.info(f"📊 {len(changes_df)} updates needed\n")
+
+            if len(changes_df) == 0:
+                return {'updated': 0, 'errors': 0, 'updates': []}
+
+            results = {'updated': 0, 'errors': 0, 'updates': []}
+            updated_df = original_df.copy()
+
+            for index, product in changes_df.iterrows():
+                progress = f"[{index + 1}/{len(changes_df)}]"
+                product_id = product['product_id']
+                old_price = float(product['old_price'])
+                new_price = float(product['new_price'])
+
+                logger.info(f"{progress} 🔄 {product_id}: Rs. {old_price} → Rs. {new_price}")
+
+                try:
+                    mask = updated_df['product_id'] == product_id
+                    if mask.any():
+                        updated_df.loc[mask, 'price'] = new_price
+
+                        if 'price_history' in updated_df.columns:
+                            history = self.parse_price_history(updated_df.loc[mask, 'price_history'].values[0])
+                            updated_df.loc[mask, 'price_history'] = json.dumps(self.update_price_history(history, new_price))
+
+                        if 'last_updated' in updated_df.columns:
+                            updated_df.loc[mask, 'last_updated'] = datetime.now().isoformat()
+
+                        name = updated_df.loc[mask, 'name'].values[0] if 'name' in updated_df.columns else product_id
+                        logger.info(f"{progress} ✅ {name}")
+                        results['updated'] += 1
+                        results['updates'].append({'name': name, 'product_id': product_id, 'old_price': old_price, 'new_price': new_price})
+                    else:
+                        logger.error(f"{progress} ❌ Not found")
+                        results['errors'] += 1
+                except Exception as e:
+                    logger.error(f"{progress} ❌ {e}")
+                    results['errors'] += 1
+
+                logger.info('')
+
+            updated_df.to_csv(output_csv_path, index=False)
+            logger.info(f"📄 Saved: {output_csv_path}")
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Error: {e}")
+            raise
+
+    def _generate_update_report(self, results: Dict):
+        report = f"""
+🏪 AL-FATAH PRICE UPDATE REPORT (FAST)
+======================================
+✅ Updated: {results['updated']}
+❌ Errors: {results['errors']}
+🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        logger.info('\n' + report)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        os.makedirs('reports', exist_ok=True)
+        with open(f"reports/alfatah_update_report_{timestamp}.txt", 'w') as f:
+            f.write(report)
+
+
+def generate_price_comparison(csv_file_path: str, output_path: str = None,
+                               delay_seconds: float = 0.5,
+                               progress_tracker: Optional[ProgressTracker] = None) -> Dict:
+    updater = AlFatahPriceUpdaterFast()
+    try:
+        return updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds, progress_tracker)
+    except Exception as e:
+        logger.error(f"💥 {e}")
+        raise
+
+
+def update_local_from_reviewed_csv(reviewed_csv_path: str, original_csv_path: str,
+                                    output_csv_path: str = None) -> Dict:
+    updater = AlFatahPriceUpdaterFast()
+    try:
+        return updater.update_local_from_reviewed_csv(reviewed_csv_path, original_csv_path, output_csv_path)
+    except Exception as e:
+        logger.error(f"💥 {e}")
+        raise
+
+
+if __name__ == "__main__":
+    generate_price_comparison('alfatah.csv', delay_seconds=0.5)
