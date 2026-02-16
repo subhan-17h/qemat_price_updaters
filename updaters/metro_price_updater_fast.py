@@ -11,7 +11,7 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import logging
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,19 +47,126 @@ class MetroPriceUpdaterFast:
             logger.debug(f"   Request failed: {e}")
             return None
 
-    def extract_price_from_json_scripts(self, html: str) -> Optional[float]:
+    def is_valid_product_page(self, html: str, product_name: str = None) -> Tuple[bool, str]:
         """
-        Metro has price data in script tags with format:
-        {"id":387468,"price":905,"sell_price":null,...}
+        Validate that the page is a valid product page (not a 404/error page).
+
+        Returns:
+            tuple[bool, str]: (is_valid, reason) - reason explains why invalid if False
         """
         try:
             soup = BeautifulSoup(html, 'html.parser')
-            scripts = soup.find_all('script')
 
+            # Check page title for error indicators
+            title = soup.find('title')
+            if title:
+                title_text = title.get_text().lower()
+                error_indicators = ['404', 'not found', 'page not found', 'product not found', 'error']
+                for indicator in error_indicators:
+                    if indicator in title_text:
+                        return False, f"Page title contains '{indicator}'"
+
+            # Check for common error messages in page content
+            page_text = soup.get_text().lower()
+            error_patterns = [
+                r'product.*not.*found',
+                r'page.*not.*available',
+                r'we.*couldn.*t.*find.*that',
+                r'sorry.*this.*product.*is.*not.*available',
+                r'this.*product.*has.*been.*removed',
+                r'product.*no.*longer.*available'
+            ]
+
+            for pattern in error_patterns:
+                if re.search(pattern, page_text):
+                    return False, f"Error message pattern found: {pattern}"
+
+            # Check __NEXT_DATA__ for 'active' field - this is the key validation
+            # Products with active: False are not actually available, even though they return price data
+            next_data = soup.find('script', id='__NEXT_DATA__')
+            if next_data:
+                try:
+                    data = json.loads(next_data.string)
+                    if 'props' in data and 'pageProps' in data['props'] and 'repo' in data['props']['pageProps']:
+                        repo = data['props']['pageProps']['repo']
+
+                        # Check if product is active
+                        if 'active' in repo:
+                            is_active = repo['active']
+                            if not is_active:
+                                return False, "Product is not active (active=False)"
+
+                        # If active field is True, continue with other checks
+                        # Try to extract price as additional validation
+                        price = self.extract_price_from_json_scripts(html)
+                        if price:
+                            return True, "Valid product page (active=True, price found in JSON)"
+
+                        price = self.extract_price_from_next_data(html)
+                        if price:
+                            return True, "Valid product page (active=True, price found in __NEXT_DATA__)"
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.debug(f"   __NEXT_DATA__ parsing error: {e}")
+
+            # Fallback: Check if there's an actual product detail section
+            # Valid product pages should have product-specific elements
+            product_indicators = [
+                lambda s: s.find('h1', class_=lambda x: x and 'product' in x.lower()) is not None,
+                lambda s: s.find('div', class_=lambda x: x and 'product-detail' in x.lower()) is not None,
+                lambda s: s.find('div', class_=lambda x: x and 'product-info' in x.lower()) is not None,
+            ]
+
+            has_product_content = any(check(soup) for check in product_indicators)
+
+            # If no product-specific content found, might be an error page
+            if not has_product_content:
+                price_elem = soup.find(class_=lambda x: x and 'price' in x.lower())
+                if not price_elem:
+                    return False, "No product detail or price elements found"
+
+            return True, "Valid product page"
+
+        except Exception as e:
+            logger.debug(f"   Page validation error: {e}")
+            return False, f"Validation error: {e}"
+
+    def extract_price_from_json_scripts(self, html: str) -> Optional[float]:
+        """
+        Metro has price data in script tags with format:
+        {"id":387468,"price":905,"sell_price":null,"sale_price":559,"sale":true,...}
+
+        When sale=true, use sale_price. Otherwise use price.
+        """
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+
+            # First check __NEXT_DATA__ for sale price (most reliable)
+            next_data = soup.find('script', id='__NEXT_DATA__')
+            if next_data:
+                try:
+                    data = json.loads(next_data.string)
+                    if 'props' in data and 'pageProps' in data['props'] and 'repo' in data['props']['pageProps']:
+                        repo = data['props']['pageProps']['repo']
+
+                        # Check if product is on sale and use sale_price
+                        if repo.get('sale', False) and 'sale_price' in repo:
+                            sale_price = repo.get('sale_price')
+                            if sale_price and isinstance(sale_price, (int, float)) and sale_price > 0:
+                                return float(sale_price)
+
+                        # Otherwise use regular price
+                        if 'price' in repo:
+                            price = repo.get('price')
+                            if price and isinstance(price, (int, float)) and price > 0:
+                                return float(price)
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.debug(f"   __NEXT_DATA__ parsing error: {e}")
+
+            # Fallback to script tag parsing
+            scripts = soup.find_all('script')
             for script in scripts:
                 if script.string:
                     # Find JSON objects with price field
-                    # Pattern: {"price":905} or "price":905
                     matches = re.findall(r'\{[^{}]*"price"\s*:\s*(\d+\.?\d*)[^{}]*\}', script.string)
                     if matches:
                         for match in matches:
@@ -75,7 +182,12 @@ class MetroPriceUpdaterFast:
                     for pattern in json_patterns:
                         try:
                             data = json.loads(pattern)
-                            # Check various price fields
+                            # Check various price fields - prioritize sale_price if sale is true
+                            if data.get('sale', False) and 'sale_price' in data:
+                                price = float(data['sale_price'])
+                                if 0 < price < 1000000:
+                                    return price
+                            # Check other price fields
                             for key in ['price', 'sell_price', 'sale_price', 'gross_sell_price']:
                                 if key in data and data[key]:
                                     price = float(data[key])
@@ -96,6 +208,22 @@ class MetroPriceUpdaterFast:
             next_data = soup.find('script', id='__NEXT_DATA__')
             if next_data:
                 data = json.loads(next_data.string)
+
+                # First check if there's a repo with sale/price data
+                if 'props' in data and 'pageProps' in data['props'] and 'repo' in data['props']['pageProps']:
+                    repo = data['props']['pageProps']['repo']
+
+                    # Use sale_price if on sale
+                    if repo.get('sale', False) and 'sale_price' in repo:
+                        price = repo.get('sale_price')
+                        if isinstance(price, (int, float)) and 0 < price < 1000000:
+                            return float(price)
+
+                    # Otherwise use regular price
+                    if 'price' in repo:
+                        price = repo.get('price')
+                        if isinstance(price, (int, float)) and 0 < price < 1000000:
+                            return float(price)
 
                 def find_price(obj, depth=0):
                     if depth > 15:
@@ -156,7 +284,7 @@ class MetroPriceUpdaterFast:
 
         return None
 
-    def extract_price_from_page(self, url: str) -> Optional[Dict[str, Any]]:
+    def extract_price_from_page(self, url: str, product_name: str = None) -> Optional[Dict[str, Any]]:
         """Extract price from Metro product page."""
         try:
             logger.info(f"   🌐 Fetching: {url}")
@@ -164,6 +292,12 @@ class MetroPriceUpdaterFast:
 
             if not html:
                 logger.warning(f"   ❌ Failed to fetch")
+                return None
+
+            # Validate this is a valid product page (not a 404/error page)
+            is_valid, reason = self.is_valid_product_page(html, product_name)
+            if not is_valid:
+                logger.warning(f"   ❌ Invalid product page: {reason}")
                 return None
 
             # Try multiple strategies
@@ -271,7 +405,7 @@ class MetroPriceUpdaterFast:
 
                 logger.info(f"   📋 CSV Price: Rs. {csv_price}")
 
-                website_data = self.extract_price_from_page(product['original_url'])
+                website_data = self.extract_price_from_page(product['original_url'], product_name)
 
                 if not website_data:
                     logger.warning(f"{progress} ❌ Fetch failed")
