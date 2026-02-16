@@ -117,7 +117,32 @@ class CarrefourPriceUpdater:
             
             # Wait for page to load
             time.sleep(3)
-            
+
+            # Check if product is out of stock
+            try:
+                out_of_stock_selectors = [
+                    'div.text-md.leading-5.font-bold.text-red-500',
+                    'div.text-red-500',
+                    'div.out-of-stock',
+                    '[data-testid="out-of-stock"]',
+                    'div.stock-status:contains("Out of stock")'
+                ]
+                for selector in out_of_stock_selectors:
+                    try:
+                        out_of_stock_elem = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        if out_of_stock_elem and 'out of stock' in out_of_stock_elem.text.lower():
+                            logger.info(f"   ⚠️ Product is OUT OF STOCK - skipping price update")
+                            return {
+                                'current_price': None,
+                                'original_price': None,
+                                'out_of_stock': True,
+                                'source_info': {'status': 'out_of_stock'}
+                            }
+                    except:
+                        continue
+            except Exception as e:
+                logger.debug(f"   Error checking out of stock status: {e}")
+
             # Carrefour-specific price extraction logic based on the scraper.py
             price = 0.0
             price_main = "0"
@@ -415,6 +440,15 @@ class CarrefourPriceUpdater:
                     # Save progress
                     if progress_tracker:
                         progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price, error_message='Page timeout after retries')
+                elif website_data.get('out_of_stock'):
+                    logger.info(f"{progress} ⚠️ Product is OUT OF STOCK - No update needed")
+                    comparison_row['price_change_needed'] = 'NO - Out of stock'
+                    comparison_row['new_price'] = 'N/A'
+                    comparison_data.append(comparison_row)
+                    self.stats['unchanged'] += 1
+                    # Save progress
+                    if progress_tracker:
+                        progress_tracker.save_progress(product.get('product_id'), 'NO_CHANGE', old_price=csv_price, new_price=None, error_message='Out of stock')
                 elif not website_data.get('current_price'):
                     logger.warning(f"{progress} ❌ Could not extract price from page")
                     comparison_row['price_change_needed'] = 'ERROR - Price not found on page'
