@@ -1,4 +1,4 @@
-#type: ignore
+    #type: ignore
 import pandas as pd
 import time
 import json
@@ -48,6 +48,22 @@ class CarrefourPriceUpdater:
             'results': []
         }
         
+    def _restart_driver(self):
+        """Close the current browser and start a fresh one"""
+        logger.info("🔄 Restarting browser window...")
+        try:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+                logger.info("🔚 Browser closed")
+        except Exception as e:
+            logger.warning(f"⚠️  Error while closing browser: {e}")
+        time.sleep(2)  # Brief pause before reopening
+        if not self._setup_driver():
+            raise Exception("Failed to restart browser")
+        self._test_website_connection()
+        logger.info("✅ Browser restarted successfully")
+
     def _setup_driver(self):
         """Setup Chrome WebDriver with options"""
         try:
@@ -369,6 +385,11 @@ class CarrefourPriceUpdater:
                         # Update stats to reflect actual total
                         self.stats['total'] = len(df)
             
+            BROWSER_RESTART_INTERVAL = 190
+            CONSECUTIVE_FAIL_THRESHOLD = 3
+            products_since_restart = 0
+            consecutive_failures = 0
+
             for index, product in df.iterrows():
                 progress = f"[{index + 1}/{self.stats['total']}]"
                 product_name = product.get('name', 'Unknown Product')
@@ -432,6 +453,26 @@ class CarrefourPriceUpdater:
                         else:
                             logger.error(f"{progress} ❌ All retry attempts failed: {e}")
                 
+                # If all retries failed, restart browser and try once more
+                if not website_data:
+                    consecutive_failures += 1
+                    logger.warning(f"{progress} ⚠️  Consecutive failures: {consecutive_failures}/{CONSECUTIVE_FAIL_THRESHOLD}")
+                    
+                    # Force browser restart if we hit the threshold or after initial retries fail
+                    if consecutive_failures >= CONSECUTIVE_FAIL_THRESHOLD:
+                        logger.info(f"\n🔁 {consecutive_failures} consecutive failures detected — restarting browser session...")
+                        try:
+                            self._restart_driver()
+                            products_since_restart = 0
+                            consecutive_failures = 0
+                            time.sleep(3)  # Extra pause after restart
+                            
+                            # Retry this product with the fresh browser
+                            logger.info(f"{progress} 🔄 Retrying with fresh browser session...")
+                            website_data = self.extract_price_from_page(product['original_url'])
+                        except Exception as restart_err:
+                            logger.error(f"❌ Browser restart failed: {restart_err}")
+                
                 if not website_data:
                     logger.warning(f"{progress} ❌ Could not fetch website price after {max_retries} attempts")
                     comparison_row['price_change_needed'] = 'ERROR - Page timeout or failed to load'
@@ -441,6 +482,7 @@ class CarrefourPriceUpdater:
                     if progress_tracker:
                         progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price, error_message='Page timeout after retries')
                 elif website_data.get('out_of_stock'):
+                    consecutive_failures = 0  # Reset on any successful page load
                     logger.info(f"{progress} ⚠️ Product is OUT OF STOCK - No update needed")
                     comparison_row['price_change_needed'] = 'NO - Out of stock'
                     comparison_row['new_price'] = 'N/A'
@@ -458,6 +500,7 @@ class CarrefourPriceUpdater:
                     if progress_tracker:
                         progress_tracker.save_progress(product.get('product_id'), 'ERROR', old_price=csv_price, error_message='Price not found')
                 else:
+                    consecutive_failures = 0  # Reset on successful price extraction
                     website_price = website_data['current_price']
                     price_difference = website_price - csv_price
                     
@@ -486,7 +529,16 @@ class CarrefourPriceUpdater:
                     self.stats['processed'] += 1
                 
                 logger.info('')
-                
+                products_since_restart += 1
+
+                # Proactive browser restart every BROWSER_RESTART_INTERVAL products
+                if products_since_restart >= BROWSER_RESTART_INTERVAL and index < len(df) - 1:
+                    logger.info(f"\n🔁 Processed {products_since_restart} products — proactively restarting browser to keep session fresh...")
+                    self._restart_driver()
+                    products_since_restart = 0
+                    consecutive_failures = 0
+                    time.sleep(3)  # Extra pause after proactive restart
+
                 # Rate limiting
                 if index < len(df) - 1:
                     logger.info(f"   ⏳ Waiting {delay_seconds}s before next request...")
