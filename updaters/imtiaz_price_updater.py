@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import json
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
@@ -110,181 +111,218 @@ class ImtiazPriceUpdater:
             return False
     
     def _select_dropdown_option(self, dropdown_input, option_text: str, dropdown_name: str) -> bool:
-        """Helper method to select an option from a MUI Autocomplete dropdown"""
+        """Select an option from a MUI autocomplete with readonly-safe fallbacks."""
         try:
-            wait = WebDriverWait(self.driver, 10)
-            short_wait = WebDriverWait(self.driver, 3)
-            
-            # Click on the input to open dropdown
-            dropdown_input.click()
-            time.sleep(1)
-            
-            # Type the option text to filter
-            dropdown_input.clear()
-            dropdown_input.send_keys(option_text)
-            logger.info(f"   📝 Typed '{option_text}' in {dropdown_name}")
-            time.sleep(2)
-            
-            # Wait for dropdown options to appear (MUI uses a listbox with role="listbox")
+            wait = WebDriverWait(self.driver, 12)
+
+            # Open dropdown from input first.
+            try:
+                dropdown_input.click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", dropdown_input)
+            time.sleep(0.6)
+
+            # For non-readonly inputs, typing helps filter options.
+            readonly = (dropdown_input.get_attribute("readonly") or "").lower()
+            if readonly not in ("", "false"):
+                logger.info(f"   ℹ️ {dropdown_name} is readonly; selecting from list options directly")
+            else:
+                try:
+                    dropdown_input.clear()
+                    dropdown_input.send_keys(option_text)
+                    logger.info(f"   📝 Typed '{option_text}' in {dropdown_name}")
+                    time.sleep(0.8)
+                except Exception as e:
+                    logger.debug(f"   ⚠️ Could not type in {dropdown_name}: {e}")
+
+            # Ensure listbox is visible (MUI popper).
+            try:
+                wait.until(EC.presence_of_element_located((By.XPATH, "//ul[@role='listbox']")))
+            except Exception:
+                pass
+
+            # Preferred exact/contains text options.
             option_selectors = [
-                f"//li[contains(@class, 'MuiAutocomplete-option') and contains(text(), '{option_text}')]",
-                f"//li[@role='option' and contains(text(), '{option_text}')]",
-                f"//*[@role='option' and contains(text(), '{option_text}')]",
-                "//li[contains(@class, 'MuiAutocomplete-option')]",
-                "//*[@role='option']"
+                f"//li[@role='option'][.//span[normalize-space()='{option_text}'] or normalize-space()='{option_text}']",
+                f"//li[@role='option'][contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{option_text.lower()}')]",
+                "//li[@role='option']",
             ]
-            
+
             for selector in option_selectors:
                 try:
                     options = self.driver.find_elements(By.XPATH, selector)
                     for option in options:
-                        if option.is_displayed():
-                            option_value = option.text.strip()
-                            if option_text.lower() in option_value.lower():
-                                logger.info(f"   🎯 Found matching option: '{option_value}'")
-                                self.driver.execute_script("arguments[0].scrollIntoView(true);", option)
-                                time.sleep(0.3)
+                        if not option.is_displayed():
+                            continue
+
+                        option_value = option.text.strip()
+                        if selector.endswith("//li[@role='option']") or option_text.lower() in option_value.lower():
+                            logger.info(f"   🎯 Found option candidate: '{option_value}'")
+                            self.driver.execute_script("arguments[0].scrollIntoView({block: 'nearest'});", option)
+                            time.sleep(0.2)
+                            try:
                                 option.click()
-                                logger.info(f"   ✅ Selected '{option_value}' in {dropdown_name}")
-                                time.sleep(1)
-                                return True
+                            except Exception:
+                                self.driver.execute_script("arguments[0].click();", option)
+                            logger.info(f"   ✅ Selected '{option_value}' in {dropdown_name}")
+                            time.sleep(0.8)
+                            return True
                 except Exception as e:
                     logger.debug(f"   ⚠️ Selector '{selector}' failed: {e}")
-                    continue
-            
-            # Fallback: just click the first visible option
-            try:
-                first_option = short_wait.until(EC.element_to_be_clickable((By.XPATH, "//li[contains(@class, 'MuiAutocomplete-option')]")))
-                option_value = first_option.text.strip()
-                first_option.click()
-                logger.info(f"   ✅ Selected first available option: '{option_value}' in {dropdown_name}")
-                time.sleep(1)
-                return True
-            except:
-                pass
-            
-            # Last fallback: press Enter to select
+
+            # Keyboard fallback.
             from selenium.webdriver.common.keys import Keys
             dropdown_input.send_keys(Keys.ARROW_DOWN)
-            time.sleep(0.5)
+            time.sleep(0.3)
             dropdown_input.send_keys(Keys.ENTER)
-            logger.info(f"   ✅ Pressed Enter to select in {dropdown_name}")
-            time.sleep(1)
+            logger.info(f"   ✅ Used keyboard fallback for {dropdown_name}")
+            time.sleep(0.8)
             return True
-            
+
         except Exception as e:
             logger.warning(f"   ⚠️ Error selecting option in {dropdown_name}: {e}")
             return False
     
     def _handle_location_selection(self):
-        """Handle the Imtiaz location selection with Material UI dropdowns (City + Area)"""
+        """Handle Imtiaz location modal robustly for cloud/headless runs."""
         try:
             if self.location_selected:
                 return True
-                
+
             logger.info("   🏪 Handling Imtiaz location selection...")
-            
             wait = WebDriverWait(self.driver, 15)
-            
+
+            # If modal prompt isn't visible, assume location is already set.
+            modal_markers = self.driver.find_elements(
+                By.XPATH,
+                "//*[contains(normalize-space(.), 'Please select your location') or contains(normalize-space(.), 'Select your order type')]",
+            )
+            if not any(m.is_displayed() for m in modal_markers):
+                logger.info("   ℹ️ Location modal not visible; proceeding")
+                self.location_selected = True
+                return True
+
+            # Prefer EXPRESS tab if available.
             try:
-                # Check if location is already selected by looking at cookie or page state
-                try:
-                    # Check if we're already past the location selection
-                    city_input = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder='Select City / Region']")
-                    area_input = self.driver.find_element(By.CSS_SELECTOR, "input[placeholder='Select Area / Sub Region']")
-                    
-                    city_value = city_input.get_attribute('value')
-                    area_value = area_input.get_attribute('value')
-                    
-                    if city_value and city_value.strip() and area_value and area_value.strip():
-                        logger.info(f"   ✅ Location already selected: {city_value} - {area_value}")
-                        self.location_selected = True
-                        return True
-                except:
-                    # Location selection dialog might not be present
-                    logger.info("   ℹ️ Location selection dialog not found, might already be set")
-                    self.location_selected = True
-                    return True
-                
-                # Step 1: Select City first (e.g., "Karachi")
-                logger.info("   📍 Step 1: Selecting city...")
-                
-                try:
-                    city_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Select City / Region']")))
-                    logger.info("   ✅ Found city dropdown")
-                    
-                    if not self._select_dropdown_option(city_input, "Karachi", "City dropdown"):
-                        logger.warning("   ⚠️ Could not select city, trying to continue...")
-                except Exception as e:
-                    logger.warning(f"   ⚠️ City dropdown not found or error: {e}")
-                
-                time.sleep(2)
-                
-                # Step 2: Select Area (e.g., "Askari 1")
-                logger.info("   📍 Step 2: Selecting area...")
-                
-                try:
-                    area_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Select Area / Sub Region']")))
-                    logger.info("   ✅ Found area dropdown")
-                    
-                    if not self._select_dropdown_option(area_input, "Askari", "Area dropdown"):
-                        logger.warning("   ⚠️ Could not select area, trying to continue...")
-                except Exception as e:
-                    logger.warning(f"   ⚠️ Area dropdown not found or error: {e}")
-                
-                time.sleep(2)
-                
-                # Step 3: Look for and click a "Continue", "Select", or submit button
-                logger.info("   📍 Step 3: Looking for submit/continue button...")
-                
-                submit_selectors = [
-                    "//button[contains(text(), 'Continue')]",
-                    "//button[contains(text(), 'Select')]",
-                    "//button[contains(text(), 'Confirm')]",
-                    "//button[contains(text(), 'EXPRESS')]",
-                    "//button[contains(text(), 'DELIVERY')]",
-                    "//button[contains(@class, 'MuiButton') and not(@disabled)]",
-                    ".MuiButton-root:not([disabled])",
-                    "button[type='submit']"
-                ]
-                
-                for selector in submit_selectors:
+                express_tab = self.driver.find_element(
+                    By.XPATH,
+                    "//button[@role='tab' and contains(translate(normalize-space(.), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'EXPRESS')]",
+                )
+                if express_tab.get_attribute("aria-selected") != "true":
                     try:
-                        if selector.startswith("//"):
-                            buttons = self.driver.find_elements(By.XPATH, selector)
-                        else:
-                            buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                        
-                        for button in buttons:
-                            if button.is_displayed() and button.is_enabled():
-                                button_text = button.text.strip()
-                                # Skip cart or other unrelated buttons
-                                if button_text and not any(x in button_text.lower() for x in ['cart', 'login', 'sign']):
-                                    logger.info(f"   🎯 Found button: '{button_text}'")
-                                    button.click()
-                                    logger.info(f"   ✅ Clicked submit button: '{button_text}'")
-                                    time.sleep(3)
-                                    break
-                        else:
-                            continue
-                        break
-                    except Exception as e:
-                        logger.debug(f"   ⚠️ Button selector '{selector}' failed: {e}")
-                        continue
-                
-                self.location_selected = True
-                logger.info("   ✅ Location selection completed")
-                return True
-                
+                        express_tab.click()
+                    except Exception:
+                        self.driver.execute_script("arguments[0].click();", express_tab)
+                    logger.info("   ✅ Selected EXPRESS order type")
             except Exception as e:
-                logger.warning(f"   ⚠️ Error during location selection: {e}")
-                # Continue anyway - location might not be mandatory
-                self.location_selected = True
-                return True
-                
+                logger.debug(f"   ℹ️ EXPRESS tab not adjusted: {e}")
+
+            # Step 1: City selector
+            logger.info("   📍 Step 1: Ensuring city selection...")
+            city_input = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Select City / Region']"))
+            )
+            city_value = (city_input.get_attribute("value") or "").strip()
+            if city_value:
+                logger.info(f"   ✅ City pre-selected: {city_value}")
+            else:
+                if not self._select_dropdown_option(city_input, "Karachi", "City dropdown"):
+                    logger.warning("   ⚠️ Could not reliably select city; continuing with fallback flow")
+
+            # Step 2: Area selector
+            logger.info("   📍 Step 2: Selecting area...")
+            area_input = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Select Area / Sub Region']"))
+            )
+            area_value = (area_input.get_attribute("value") or "").strip()
+
+            if not area_value:
+                # Open area dropdown via popup indicator button.
+                try:
+                    popup_btn = self.driver.find_element(
+                        By.XPATH,
+                        "//input[@placeholder='Select Area / Sub Region']/ancestor::div[contains(@class, 'MuiAutocomplete-inputRoot')][1]//button[contains(@class, 'MuiAutocomplete-popupIndicator')]",
+                    )
+                    try:
+                        popup_btn.click()
+                    except Exception:
+                        self.driver.execute_script("arguments[0].click();", popup_btn)
+                    time.sleep(0.5)
+                except Exception as e:
+                    logger.debug(f"   ⚠️ Area popup button click failed: {e}")
+
+                selected_area = self._select_dropdown_option(area_input, "Askari 1", "Area dropdown")
+                if not selected_area:
+                    selected_area = self._select_dropdown_option(area_input, "Askari", "Area dropdown")
+                if not selected_area:
+                    logger.warning("   ⚠️ Could not select preferred area from dropdown")
+
+            # Step 3: click enabled Select button
+            logger.info("   📍 Step 3: Submitting location...")
+            select_btn = None
+            try:
+                select_btn = wait.until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space()='Select' and not(@disabled)]"))
+                )
+            except Exception:
+                # Fallback: any enabled button named Select.
+                candidate_buttons = self.driver.find_elements(By.XPATH, "//button[contains(normalize-space(.), 'Select')]")
+                for button in candidate_buttons:
+                    if button.is_displayed() and button.is_enabled():
+                        select_btn = button
+                        break
+
+            if select_btn is not None:
+                try:
+                    select_btn.click()
+                except Exception:
+                    self.driver.execute_script("arguments[0].click();", select_btn)
+                logger.info("   ✅ Clicked location Select button")
+                time.sleep(2)
+            else:
+                logger.warning("   ⚠️ Select button not clickable; proceeding anyway")
+
+            # Confirm modal is gone or at least not blocking.
+            try:
+                WebDriverWait(self.driver, 6).until_not(
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(normalize-space(.), 'Please select your location')]"))
+                )
+                logger.info("   ✅ Location modal dismissed")
+            except Exception:
+                logger.info("   ℹ️ Location prompt still detectable, but continuing (may be non-blocking)")
+
+            self.location_selected = True
+            logger.info("   ✅ Location selection flow completed")
+            return True
+
         except Exception as e:
             logger.error(f"   ❌ Error handling location selection: {e}")
             return False
+
+    def _parse_price_value(self, text: str) -> Optional[float]:
+        """Extract a numeric price from text with strict currency-aware parsing first."""
+        if not text:
+            return None
+
+        normalized = text.replace("\n", " ").strip()
+        currency_match = re.search(r"(?:Rs\.?|PKR|₨)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", normalized, flags=re.IGNORECASE)
+        if currency_match:
+            try:
+                return float(currency_match.group(1).replace(",", ""))
+            except ValueError:
+                return None
+
+        # Fallback for bare numbers in known price nodes.
+        number_match = re.search(r"\b([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b", normalized)
+        if number_match:
+            try:
+                value = float(number_match.group(1).replace(",", ""))
+                if value > 0:
+                    return value
+            except ValueError:
+                return None
+
+        return None
         
     def extract_price_from_page(self, url: str) -> Optional[Dict[str, Any]]:
         """Extract current price from Imtiaz website"""
@@ -308,204 +346,89 @@ class ImtiazPriceUpdater:
             
             # Wait for page to load
             time.sleep(3)
-            
-            # Specific selectors for Imtiaz website product detail page
-            imtiaz_selectors = [
-                # New specific selectors for Imtiaz MUI structure
+
+            # If modal still appears, do one more recovery attempt.
+            modal_still_present = self.driver.find_elements(
+                By.XPATH, "//*[contains(normalize-space(.), 'Please select your location')]"
+            )
+            if any(m.is_displayed() for m in modal_still_present):
+                logger.info("   🔁 Location modal still present; retrying selection once")
+                if not self._handle_location_selection():
+                    logger.warning("   ⚠️ Location recovery retry failed")
+                time.sleep(1.5)
+
+            priority_selectors = [
                 ".MuiBox-root.blink-style-1igmii2 .MuiBox-root span",
-                ".MuiBox-root.blink-style-0 span",
-                ".MuiBox-root.blink-style-1jnb8to span",
-                ".MuiBox-root span",
-                ".MuiButtonBase-root span",
-                # Broader MUI selectors
-                ".MuiBox-root span:contains('Rs.')",
-                "button span:contains('Rs.')",
-                # Primary selectors for Imtiaz website
-                ".price",
-                ".product-price",
-                ".current-price",
-                ".selling-price",
-                "[class*='price']",
-                # Material UI based selectors (since Imtiaz uses Material UI)
+                ".MuiBox-root[class*='blink-style'] span",
                 ".MuiTypography-root[class*='price']",
-                # Shopify-style selectors (common for e-commerce)
-                ".price__regular .price-item--regular",
-                ".price__sale .price-item--sale",
-                ".price-item--sale",
-                ".price-item--regular",
-                # Generic price selectors
-                ".amount",
-                "[data-price]",
-                ".final-price",
-                "span[class*='price']",
-                "div[class*='price']"
+                ".price, .product-price, .current-price, .selling-price, .final-price, .amount",
+                "[class*='price'] span, span[class*='price'], div[class*='price']",
             ]
-            
-            # Try each selector
-            for selector in imtiaz_selectors:
+
+            # Pass 1: currency-marked text only (most reliable).
+            for selector in priority_selectors:
                 try:
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elements:
-                        for element in elements:
-                            # Handle input field differently
-                            if element.tag_name.lower() == 'input':
-                                price_text = element.get_attribute('value')
-                            else:
-                                price_text = element.text.strip()
-                            
-                            if price_text:
-                                logger.info(f"Found price with selector '{selector}': {price_text}")
-                                
-                                # Clean the price text (Imtiaz might use different formats)
-                                cleaned_price = price_text.replace('Rs.', '').replace('Rs', '').replace('PKR', '').replace('₨', '').replace(',', '').strip()
-                                
-                                if cleaned_price:
-                                    try:
-                                        price_value = float(cleaned_price)
-                                        if price_value > 0:
-                                            logger.info(f"   💰 Found price: Rs. {price_value} (using selector: {selector})")
-                                            
-                                            return {
-                                                'current_price': price_value,
-                                                'original_price': None,  # Imtiaz might not show original price
-                                                'source_info': {
-                                                    'selector': selector,
-                                                    'original_text': price_text,
-                                                    'cleaned_text': cleaned_price
-                                                },
-                                                'is_sale': False
-                                            }
-                                    except ValueError:
-                                        logger.debug(f"Could not convert price to float: {cleaned_price}")
+                    for element in elements:
+                        if not element.is_displayed():
+                            continue
+
+                        text = (
+                            element.get_attribute("value")
+                            if element.tag_name.lower() == "input"
+                            else element.text.strip()
+                        )
+                        if not text:
+                            continue
+
+                        if not re.search(r"(?:Rs\.?|PKR|₨)", text, flags=re.IGNORECASE):
+                            continue
+
+                        price_value = self._parse_price_value(text)
+                        if price_value and price_value > 0:
+                            logger.info(f"   💰 Found price: Rs. {price_value} (selector: {selector})")
+                            return {
+                                'current_price': price_value,
+                                'original_price': None,
+                                'source_info': {
+                                    'selector': selector,
+                                    'original_text': text,
+                                    'cleaned_text': str(price_value),
+                                },
+                                'is_sale': False,
+                            }
                 except Exception as e:
                     logger.debug(f"Error with selector '{selector}': {e}")
-            
-            # Special handling for Imtiaz MUI structure
+
+            # Pass 2: find any visible element containing currency text.
             try:
-                # Look for the specific MUI structure: MuiBox-root with blink-style classes containing spans
-                mui_boxes = self.driver.find_elements(By.CSS_SELECTOR, ".MuiBox-root[class*='blink-style']")
-                for box in mui_boxes:
-                    spans = box.find_elements(By.TAG_NAME, "span")
-                    for span in spans:
-                        text = span.text.strip()
-                        if text and ("Rs." in text or "₨" in text or (text.replace('.', '').replace(',', '').replace('Rs', '').strip().isdigit())):
-                            logger.info(f"Found price in Imtiaz MUI structure: {text}")
-                            cleaned_price = text.replace('Rs.', '').replace('Rs', '').replace('PKR', '').replace('₨', '').replace(',', '').strip()
-                            if cleaned_price:
-                                try:
-                                    price_value = float(cleaned_price)
-                                    if price_value > 0:
-                                        logger.info(f"   💰 Found price in Imtiaz MUI structure: Rs. {price_value}")
-                                        return {
-                                            'current_price': price_value,
-                                            'original_price': None,
-                                            'source_info': {
-                                                'selector': 'Imtiaz MUI structure',
-                                                'original_text': text,
-                                                'cleaned_text': cleaned_price
-                                            },
-                                            'is_sale': False
-                                        }
-                                except ValueError:
-                                    continue
-                                    
-                # Also check inside button elements specifically
-                buttons = self.driver.find_elements(By.CSS_SELECTOR, ".MuiButtonBase-root, button")
-                for button in buttons:
-                    spans = button.find_elements(By.TAG_NAME, "span")
-                    for span in spans:
-                        text = span.text.strip()
-                        if text and ("Rs." in text or "₨" in text):
-                            logger.info(f"Found price in Imtiaz button structure: {text}")
-                            cleaned_price = text.replace('Rs.', '').replace('Rs', '').replace('PKR', '').replace('₨', '').replace(',', '').strip()
-                            if cleaned_price:
-                                try:
-                                    price_value = float(cleaned_price)
-                                    if price_value > 0:
-                                        logger.info(f"   💰 Found price in Imtiaz button: Rs. {price_value}")
-                                        return {
-                                            'current_price': price_value,
-                                            'original_price': None,
-                                            'source_info': {
-                                                'selector': 'Imtiaz button structure',
-                                                'original_text': text,
-                                                'cleaned_text': cleaned_price
-                                            },
-                                            'is_sale': False
-                                        }
-                                except ValueError:
-                                    continue
+                currency_nodes = self.driver.find_elements(
+                    By.XPATH,
+                    "//*[self::span or self::div or self::p][contains(., 'Rs') or contains(., 'PKR') or contains(., '₨')]",
+                )
+                for node in currency_nodes:
+                    if not node.is_displayed():
+                        continue
+
+                    text = node.text.strip()
+                    price_value = self._parse_price_value(text)
+                    if price_value and price_value > 0:
+                        logger.info(f"   💰 Found price: Rs. {price_value} (currency-node fallback)")
+                        return {
+                            'current_price': price_value,
+                            'original_price': None,
+                            'source_info': {
+                                'selector': 'currency-node-fallback',
+                                'original_text': text,
+                                'cleaned_text': str(price_value),
+                            },
+                            'is_sale': False,
+                        }
             except Exception as e:
-                logger.debug(f"Error with Imtiaz MUI structure search: {e}")
-            
-            # If specific selectors don't work, try broader approach
-            fallback_selectors = [
-                # MUI specific fallback selectors
-                ".MuiBox-root span",
-                ".MuiButtonBase-root span",
-                "button span",
-                "div[class*='blink-style'] span",
-                "span:contains('Rs.')",
-                # Original fallback selectors
-                ".price",
-                ".amount",
-                "[data-price]",
-                ".product-price",
-                ".current-price",
-                ".selling-price",
-                ".final-price"
-            ]
-            
-            found_prices = []
-            source_info = {}
-            
-            for selector in fallback_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    
-                    for element in elements:
-                        # Handle different element types
-                        if element.tag_name.lower() == 'input':
-                            price_text = element.get_attribute('value')
-                        else:
-                            price_text = element.text.strip()
-                            
-                        if price_text:
-                            logger.debug(f"Found price text with fallback selector '{selector}': {price_text}")
-                            cleaned_price = price_text.replace('Rs.', '').replace('Rs', '').replace('PKR', '').replace('₨', '').replace(',', '').strip()
-                            
-                            if cleaned_price:
-                                try:
-                                    price_value = float(cleaned_price)
-                                    if price_value > 0:
-                                        found_prices.append(price_value)
-                                        source_info[price_value] = {
-                                            'selector': selector,
-                                            'original_text': price_text,
-                                            'cleaned_text': cleaned_price
-                                        }
-                                except ValueError:
-                                    logger.debug(f"Could not convert price to float: {cleaned_price}")
-                except Exception as e:
-                    logger.debug(f"Error with fallback selector '{selector}': {e}")
-                    continue
-            
-            if found_prices:
-                # Return the most reasonable price (usually the lowest for current price)
-                current_price = min(found_prices)
-                
-                logger.info(f"   💰 Found price: Rs. {current_price} (using fallback selector: {source_info[current_price]['selector']})")
-                
-                return {
-                    'current_price': current_price,
-                    'original_price': max(found_prices) if len(found_prices) > 1 else None,
-                    'all_prices': found_prices,
-                    'source_info': source_info[current_price],
-                    'total_found': len(found_prices)
-                }
-            else:
-                logger.warning(f"   ❌ No price found on page")
-                return None
+                logger.debug(f"Error in currency-node fallback: {e}")
+
+            logger.warning(f"   ❌ No price found on page")
+            return None
                 
         except Exception as e:
             logger.error(f"   ❌ Error extracting price from {url}: {e}")
@@ -557,7 +480,7 @@ class ImtiazPriceUpdater:
         try:
             if not output_csv_path:
                 timestamp = datetime.now().strftime('%Y-%m-%d')
-                output_csv_path = f'jalalsons_price_comparison_{timestamp}.csv'
+                output_csv_path = f'imtiaz_price_comparison_{timestamp}.csv'
             
             # Initialize browser
             if not self._setup_driver():
@@ -824,9 +747,15 @@ class ImtiazPriceUpdater:
 
 # MAIN EXECUTION FUNCTIONS
 
-def generate_price_comparison(csv_file_path: str, output_path: str = None, delay_seconds: int = 3, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
+def generate_price_comparison(
+    csv_file_path: str,
+    output_path: str = None,
+    delay_seconds: int = 3,
+    progress_tracker: Optional[ProgressTracker] = None,
+    headless: bool = False,
+) -> Dict:
     """Generate comparison CSV for manual review"""
-    updater = ImtiazPriceUpdater(headless=False)
+    updater = ImtiazPriceUpdater(headless=headless)
     
     try:
         results = updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds, progress_tracker)

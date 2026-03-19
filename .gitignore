@@ -46,3 +46,11 @@ geckodriver.log
 
 # Optional: Uncomment if you don't want to track consolidated output
 # consolidated.csv
+
+# Node.js
+node_modules/
+
+# Firebase export/update artifacts
+getProducts/matched_products_export_*.csv
+getProducts/matched_products_export_*.xlsx
+output/

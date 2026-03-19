@@ -716,9 +716,15 @@ class CarrefourPriceUpdater:
 
 # MAIN EXECUTION FUNCTIONS
 
-def generate_price_comparison(csv_file_path: str, output_path: str = None, delay_seconds: int = 2, progress_tracker: Optional[ProgressTracker] = None) -> Dict:
+def generate_price_comparison(
+    csv_file_path: str,
+    output_path: str = None,
+    delay_seconds: int = 2,
+    progress_tracker: Optional[ProgressTracker] = None,
+    headless: bool = False,
+) -> Dict:
     """Generate comparison CSV for manual review"""
-    updater = CarrefourPriceUpdater(headless=False)
+    updater = CarrefourPriceUpdater(headless=headless)
     
     try:
         results = updater.generate_comparison_csv(csv_file_path, output_path, delay_seconds, progress_tracker)

@@ -1,0 +1,17 @@
+{
+  "name": "qemat-price-updaters-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch-products": "node getProducts/getMatchedProductsFromFirbase.js",
+    "run-price-updates": "python main.py products.csv --headless",
+    "update-firebase-prices": "node updateProducts/update_prices.js",
+    "pipeline": "python run_pipeline.py"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "papaparse": "^5.5.3",
+    "xlsx": "^0.18.5"
+  }
+}

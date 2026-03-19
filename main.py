@@ -8,6 +8,7 @@ from typing import Dict, List
 
 # Import progress tracker
 from progress_tracker import ProgressTracker
+from verify_consolidated import filter_consolidated_by_price_history
 
 # Import the updater modules
 # Using fast versions (HTTP + JSON parsing) for stores that support it
@@ -247,7 +248,8 @@ class MultiStoreUpdater:
                     csv_file_path=self.imtiaz_csv_path, 
                     output_path=self.imtiaz_comparison_path,
                     delay_seconds=3,
-                    progress_tracker=self.progress_trackers["Imtiaz"]
+                    progress_tracker=self.progress_trackers["Imtiaz"],
+                    headless=self.headless
                 )
                 self.results["Imtiaz"]["comparison_generated"] = True
                 results["Imtiaz"] = imtiaz_results
@@ -264,7 +266,8 @@ class MultiStoreUpdater:
                     csv_file_path=self.carrefour_csv_path, 
                     output_path=self.carrefour_comparison_path,
                     delay_seconds=3,
-                    progress_tracker=self.progress_trackers["Carrefour"]
+                    progress_tracker=self.progress_trackers["Carrefour"],
+                    headless=self.headless
                 )
                 self.results["Carrefour"]["comparison_generated"] = True
                 results["Carrefour"] = carrefour_results
@@ -521,9 +524,23 @@ class MultiStoreUpdater:
             # Merge if we have data from at least one store
             if dfs_to_merge:
                 consolidated_df = pd.concat(dfs_to_merge, ignore_index=True)
-                consolidated_df.to_csv(consolidated_path, index=False)
+
+                # Verification step: drop suspicious updates where change vs previous history price exceeds +/-50%
+                verified_df, verification_stats = filter_consolidated_by_price_history(
+                    consolidated_df,
+                    max_change_pct=50.0
+                )
+
+                verified_df.to_csv(consolidated_path, index=False)
                 logger.info(f"✅ Consolidated output saved to {consolidated_path}")
-                logger.info(f"📊 Total products with price changes: {total_products_with_changes}")
+                logger.info(f"📊 Total products with price changes (before verification): {total_products_with_changes}")
+                logger.info(
+                    "🔍 Consolidated verification: checked=%s, dropped=%s, kept=%s, skipped_no_history=%s",
+                    verification_stats["checked"],
+                    verification_stats["dropped"],
+                    verification_stats["kept"],
+                    verification_stats["skipped_no_history"],
+                )
                 return consolidated_path
             else:
                 logger.warning("⚠️  No products with price changes found to consolidate")

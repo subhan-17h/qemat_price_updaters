@@ -13,6 +13,42 @@ This script integrates price updaters for multiple stores (Al-Fatah, Jalal Sons,
 python main.py products.csv
 ```
 
+## Full Firebase -> Scrape -> Firebase Pipeline
+
+This repository now supports a full 3-step pipeline:
+
+1. Export products from Firebase into root `products.csv`
+2. Run all store updaters to generate `consolidated.csv`
+3. Push consolidated price updates back to Firebase
+
+### One-command pipeline (recommended for cloud)
+
+```bash
+python run_pipeline.py
+```
+
+### Useful pipeline flags
+
+```bash
+# Dry run (print commands only)
+python run_pipeline.py --dry-run
+
+# Skip Firebase export step
+python run_pipeline.py --skip-fetch
+
+# Skip Firebase update step
+python run_pipeline.py --skip-firebase-update
+
+# Run Selenium in headed mode
+python run_pipeline.py --no-headless
+```
+
+### Node dependencies (required for Firebase scripts)
+
+```bash
+npm install
+```
+
 ## Input CSV Format
 
 The input CSV must have these columns:
