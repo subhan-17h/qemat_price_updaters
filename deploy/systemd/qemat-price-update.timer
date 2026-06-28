@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Qemat price update Sunday at 02:00 Pakistan time
+
+[Timer]
+OnCalendar=Sat *-*-* 21:00:00 UTC
+Persistent=true
+RandomizedDelaySec=0
+Unit=qemat-price-update.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=Qemat weekly price update and bundle export
+After=network-online.target
+Wants=network-online.target
+OnFailure=qemat-email-alert@%n.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/apps/qemat_price_updaters
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=qemat-alerts
+ExecStart=/home/ubuntu/apps/qemat_price_updaters/.venv/bin/python run_pipeline.py --require-all-stores
+ExecStartPost=/home/ubuntu/apps/qemat_price_updaters/.venv/bin/python scripts/send_failure_email.py success qemat-price-update.service
+TimeoutStartSec=8h
+TimeoutStopSec=5min
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

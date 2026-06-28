@@ -548,7 +548,7 @@ class MultiStoreUpdater:
         
         except Exception as e:
             logger.error(f"❌ Error merging output files: {e}")
-            return None
+            raise
     
     def organize_reports(self) -> None:
         """Copy important files to the reports directory for better organization"""
@@ -675,8 +675,9 @@ Products with no price changes are excluded from the consolidated file.
             logger.error(f"❌ Error generating summary report: {e}")
 
 
-def run_price_update_workflow(input_csv_path: str, headless: bool = False, 
-                              step1_only: bool = False, step2_only: bool = False) -> Dict:
+def run_price_update_workflow(input_csv_path: str, headless: bool = False,
+                              step1_only: bool = False, step2_only: bool = False,
+                              require_all_stores: bool = False) -> Dict:
     """
     Run the complete price update workflow for all supported stores: Al-Fatah, Jalal Sons, Rainbow, Metro, and Imtiaz.
     
@@ -702,6 +703,17 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
         if not step2_only:
             logger.info(f"🔍 Step 1: Generating price comparison CSVs")
             comparison_results = updater.generate_price_comparisons()
+
+            if require_all_stores:
+                failed_stores = [
+                    store
+                    for store, result in updater.results.items()
+                    if result["products"] > 0 and not result["comparison_generated"]
+                ]
+                if failed_stores:
+                    raise RuntimeError(
+                        "Required store comparison failed: " + ", ".join(failed_stores)
+                    )
             
             if step1_only:
                 logger.info("\n📝 Step 1 completed. Comparison CSVs generated.")
@@ -733,6 +745,17 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
                 updater.check_existing_comparison_files()
             
             update_results = updater.update_from_comparisons()
+
+            if require_all_stores:
+                failed_stores = [
+                    store
+                    for store, result in updater.results.items()
+                    if result["products"] > 0 and not result["updates_applied"]
+                ]
+                if failed_stores:
+                    raise RuntimeError(
+                        "Required store update failed: " + ", ".join(failed_stores)
+                    )
             
             # Merge output files
             consolidated_path = updater.merge_output_files()
@@ -761,6 +784,11 @@ if __name__ == "__main__":
     parser.add_argument("--headless", action="store_true", help="Run browsers in headless mode")
     parser.add_argument("--step1-only", action="store_true", help="Only run Step 1 (comparison generation)")
     parser.add_argument("--step2-only", action="store_true", help="Only run Step 2 (apply local CSV updates)")
+    parser.add_argument(
+        "--require-all-stores",
+        action="store_true",
+        help="Exit non-zero if any populated store fails comparison generation or local update",
+    )
 
     
     args = parser.parse_args()
@@ -776,5 +804,6 @@ if __name__ == "__main__":
         input_csv_path=args.input_csv,
         headless=args.headless,
         step1_only=args.step1_only,
-        step2_only=args.step2_only
+        step2_only=args.step2_only,
+        require_all_stores=args.require_all_stores,
     )
