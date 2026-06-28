@@ -708,7 +708,11 @@ def run_price_update_workflow(input_csv_path: str, headless: bool = False,
                 failed_stores = [
                     store
                     for store, result in updater.results.items()
-                    if result["products"] > 0 and not result["comparison_generated"]
+                    if result["products"] > 0
+                    and (
+                        not result["comparison_generated"]
+                        or int(comparison_results.get(store, {}).get("stats", {}).get("processed", 0)) <= 0
+                    )
                 ]
                 if failed_stores:
                     raise RuntimeError(
