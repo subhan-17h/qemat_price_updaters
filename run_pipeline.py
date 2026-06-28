@@ -211,8 +211,6 @@ def run_pipeline(args: argparse.Namespace, root: Path) -> int:
 
     if shutil.which("node") is None:
         raise RuntimeError("node is not installed or not in PATH")
-    if shutil.which("python") is None:
-        raise RuntimeError("python is not installed or not in PATH")
     if (not args.skip_fetch or not args.skip_firebase_update) and not service_account.exists():
         raise FileNotFoundError(f"Missing Firebase key: {service_account}")
 
@@ -238,7 +236,7 @@ def run_pipeline(args: argparse.Namespace, root: Path) -> int:
             consolidated_csv.unlink()
             print(f"🧹 Removed stale consolidated output: {consolidated_csv}")
 
-        cmd = ["python", "main.py", str(products_csv)]
+        cmd = [sys.executable, "main.py", str(products_csv)]
         if not args.no_headless:
             cmd.append("--headless")
         if args.require_all_stores:
